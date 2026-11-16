@@ -14,7 +14,7 @@ Treasure Seeker (project folder `vault-run`).
 
 `ui/logo.png`, `ui/panel.png`, `ui/btn_*.png`, `ui/heart.png`, `ui/heart_empty.png`,
 `ui/coin.png`, `ui/shield.png`, `ui/trophy.png`, `ui/ankh.png`, `ui/token.png`, `ui/scroll.png`,
-`ui/die.png`, `ui/bar_dark.png`, `ui/s_*.png` (slab signs)
+`ui/die.png`, `ui/bar_dark.png`, `ui/s_*.png` (slab signs), `ui/banana.png`
 
 - Generated for this game on OpenArt with GPT Image 2, 2026-11-16
 - Background removed, cut and recoloured with `tools/make_ui.py`

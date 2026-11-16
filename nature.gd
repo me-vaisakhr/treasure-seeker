@@ -150,8 +150,10 @@ func build(m) -> void:
 	noise.frequency = 0.07
 	# the causeway from the start cave counts as path, so nothing grows on it
 	var route: Array[Vector3] = path.duplicate()
+	var route_y: Array[float] = m.base_y.duplicate()
 	for k in range(1, 8):
 		route.append(path[0] + Vector3(0, 0, m.GAP * k))
+		route_y.append(path[0].y)
 
 	# waterfalls pour from the left cliff; a stepped river runs under the right cliff
 	var falls: Array[float] = []
@@ -167,11 +169,12 @@ func build(m) -> void:
 		while gz <= z1:
 			var d := 1e9
 			var py := 0.0
-			for q in route:
+			for qi in route.size():
+				var q := route[qi]
 				var dd := Vector2(q.x - gx, q.z - gz).length()
 				if dd < d:
 					d = dd
-					py = q.y
+					py = route_y[qi]
 			var n := noise.get_noise_2d(gx, gz)
 			var h := py - 9.5 - clampf((d - 6.0) * 0.3, 0.0, 3.0) + n * 1.5
 			var wet := gx > x1 - 9.0  # a long lake under the right-hand mountains
@@ -206,7 +209,9 @@ func build(m) -> void:
 
 	# Mountains ring the valley: terraced slopes that climb away from it,
 	# forested low down, bare rock higher, pale stone at the peaks.
-	mpath = path
+	mpath = []
+	for k in path.size():
+		mpath.append(Vector3(path[k].x, m.base_y[k], path[k].z))
 	mnoise = FastNoiseLite.new()
 	mnoise.seed = rng.randi()
 	mnoise.frequency = 0.018

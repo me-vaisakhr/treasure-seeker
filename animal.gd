@@ -11,6 +11,8 @@ var shins: Array[Node3D] = []   # knee pivots, same order
 var chain: Array[Node3D] = []   # trunk (elephant), tail (tiger), neck (cobra)
 var tail: Array[Node3D] = []    # elephant's tail
 var ears: Array[Node3D] = []
+var arms: Array[Node3D] = []    # monkey: shoulder pivots, left then right
+var elbows: Array[Node3D] = []
 var coil: Array[Node3D] = []    # cobra body ring
 var chest: Node3D
 var rump: Node3D
@@ -27,6 +29,8 @@ var wake_to := 1.0   # cobra: 0 asleep on its coil, 1 reared up
 var strike := 0.0    # cobra: 0..1 lunge
 var aim := 0.0       # cobra: yaw (local) towards its target
 var crouch := 0.0    # tiger: 0 standing .. 1 low stalking crouch
+var hang := false    # monkey: swinging from a vine by its hands
+var eat := false     # monkey: munching, one hand to its mouth
 var swipe := 0.0     # tiger: 0..1 one paw strike with the right foreleg
 
 var t := 0.0
@@ -67,6 +71,8 @@ func _process(delta: float) -> void:
 			_tiger(delta, flat, speed, k)
 		"cobra":
 			_cobra(delta)
+		"monkey":
+			_monkey(delta, flat, speed, k)
 
 
 func _elephant(delta: float, flat: float, speed: float, k: float) -> void:
@@ -132,6 +138,52 @@ func _tiger(delta: float, flat: float, speed: float, k: float) -> void:
 	for i in chain.size():  # tail: curls up, flicks when idle, whips against the run
 		chain[i].rotation.x = -0.14 + sin(t * 3.0 + i * 0.7) * 0.07 + lag * 0.25
 		chain[i].rotation.y = sin(t * 2.3 + i * 0.6) * (0.16 - amp * 0.08) + sin(phase + i * 0.5) * 0.12 * amp
+
+
+func _monkey(delta: float, flat: float, speed: float, k: float) -> void:
+	# Hanging: arms stretched up the vine, legs tucked, and the body trails
+	# behind the swing like a weight on a string. On the ground it squats,
+	# looks about, scratches, and bounds when it moves. Its tail never stops.
+	var amp := clampf(speed / 4.0, 0.0, 1.0)
+	phase += flat * TAU / 1.4
+	for i in 2:
+		var side := -1.0 if i == 0 else 1.0
+		var ph := phase + (PI if i == 1 else 0.0)
+		var arm := 0.45
+		var elbow := 0.5
+		var thigh := 1.35  # squatting
+		var shin := -2.0
+		if hang:
+			arm = 3.05 + sin(t * 3.0 + i) * 0.06
+			elbow = 0.12
+			thigh = 1.1 + sin(t * 4.0 + i * 1.7) * 0.12
+			shin = -1.5
+		elif amp > 0.1:  # bounding on all fours
+			arm = 0.9 + sin(ph) * 0.7
+			elbow = 0.3
+			thigh = 0.7 - sin(ph) * 0.7
+			shin = -1.1
+		elif eat and i == 1:  # hand to mouth, munching
+			arm = 2.3 + sin(t * 14.0) * 0.12
+			elbow = 2.0
+		elif fmod(t + 1.0, 4.0) < 0.9 and i == 0:  # a quick scratch of the ribs
+			arm = 0.9
+			elbow = 1.9 + sin(t * 26.0) * 0.25
+		arms[i].rotation.x = lerpf(arms[i].rotation.x, arm, k)
+		arms[i].rotation.z = lerpf(arms[i].rotation.z, side * (0.12 if hang else 0.3), k)
+		elbows[i].rotation.x = lerpf(elbows[i].rotation.x, elbow, k)
+		legs[i].rotation.x = lerpf(legs[i].rotation.x, thigh, k)
+		shins[i].rotation.x = lerpf(shins[i].rotation.x, shin, k)
+	var sway := 0.0
+	if hang:
+		sway = clampf(-lag * 1.6, -0.7, 0.7)  # body lags the swing, then overshoots
+	chest.rotation.x = lerpf(chest.rotation.x, sway + (0.0 if hang else 0.18), k)
+	chest.position.y = 0.62 + (absf(sin(phase)) * 0.12 * amp if not hang else 0.0) + sin(t * 2.4) * 0.012 - (0.0 if hang or amp > 0.1 else 0.2)
+	head.rotation.y = sin(t * 1.1) * 0.5 * (0.0 if hang or amp > 0.1 else 1.0)
+	head.rotation.x = lerpf(head.rotation.x, -sway * 0.6 + (0.25 if eat else 0.0), k)
+	for i in chain.size():  # tail: an S that curls and streams behind a swing
+		chain[i].rotation.x = -0.32 + sin(t * 2.6 + i * 0.8) * 0.16 + lag * 0.5
+		chain[i].rotation.y = sin(t * 1.9 + i * 0.7) * 0.22
 
 
 func _cobra(delta: float) -> void:

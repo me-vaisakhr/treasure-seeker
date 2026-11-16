@@ -88,10 +88,10 @@ const DAY := [
 	{"at": 1.0, "top": "5a6fb5", "hor": "ffb38a", "sun": "ffb07a", "sun_e": 1.25, "amb": "c9a6b0", "amb_e": 0.65, "lit": "ffd9b8", "dark": "b07a9a", "pitch": -14.0, "yaw": 70.0, "night": 0.0},
 ]
 const STYLES := [
-	{"name": "Ridge walk", "fwd": Vector2i(5, 8), "side": Vector2i(3, 5), "rise": [0.3, 0.3, 0.0, -0.2]},
-	{"name": "Zigzag stairs", "fwd": Vector2i(3, 5), "side": Vector2i(4, 7), "rise": [0.45, 0.3, 0.3, 0.0]},
-	{"name": "Long climb", "fwd": Vector2i(7, 11), "side": Vector2i(2, 3), "rise": [0.5, 0.4, 0.2, -0.3]},
-	{"name": "Rolling hills", "fwd": Vector2i(4, 7), "side": Vector2i(3, 6), "rise": [0.4, -0.35, 0.3, -0.2]},
+	{"name": "Ridge walk", "fwd": Vector2i(5, 8), "side": Vector2i(3, 5), "prof": ["flat", "rolling", "stairs_up", "ledge", "stairs_down", "drop"]},
+	{"name": "Zigzag stairs", "fwd": Vector2i(3, 5), "side": Vector2i(4, 7), "prof": ["stairs_up", "stairs_up", "stairs_down", "ledge", "rolling"]},
+	{"name": "Long climb", "fwd": Vector2i(7, 11), "side": Vector2i(2, 3), "prof": ["stairs_up", "stairs_up", "ledge", "rolling", "flat", "drop"]},
+	{"name": "Rolling hills", "fwd": Vector2i(4, 7), "side": Vector2i(3, 6), "prof": ["rolling", "rolling", "stairs_up", "stairs_down", "drop", "ledge"]},
 ]
 
 const ROSTER := [
@@ -109,6 +109,7 @@ var pix_tex: ImageTexture
 var font: Font       # hard-edged, for labels inside the pixel 3D world
 var ui_font: Font    # chunky display face for menus and HUD
 var tex_cache := {}  # painted UI art from res://ui/, loaded on first use
+var rescues: Array[Dictionary] = []  # monkey rescues in flight: {vine, pivot, mk}
 var reveals := {}    # slab index -> {nodes, board, radius, shown}: signs appear only when a runner is near
 var hurdles := {}    # slab index -> "log" / "block" / "beam": things to vault, flip over or slide under
 var view: SubViewport  # low-res 3D viewport
@@ -126,6 +127,7 @@ var cam_dir := Vector3(0, 0, -1)
 var path: Array[Vector3] = []  # top-centre of each slab
 var dirs: Array[Vector3] = []  # heading from slab i to i+1
 var yaws: Array[float] = []
+var base_y: Array[float] = []  # path height without the per-slab unevenness (the scenery follows this)
 
 var kinds: Array[String] = []
 var rope_to := {}
@@ -171,6 +173,8 @@ var slow_to := 1.0         # game speed wanted (1 normal, lower = slow motion)
 var slow_now := 1.0
 var dead := false          # this race has been abandoned (restart / exit): all its routines must stop
 static var boot_bots := 0  # survives a scene reload: start a race straight away with this many bots
+var ui_layer: SubViewport  # the 2D viewport all menus and HUD live in
+var safe: Control          # HUD parent, inset to clear the notch and the home bar
 var lbl_count: Label       # giant 3-2-1-GO
 var pause_btn: Button
 var pause_panel: Control
@@ -230,6 +234,8 @@ func _ready() -> void:
 	_build_look()
 	_build_env()
 	_build_ui()
+	apply_safe_area()
+	get_viewport().size_changed.connect(apply_safe_area)
 	load_settings()
 	prepare_world()
 	if boot_bots > 0:  # came back from "Restart"
@@ -242,6 +248,12 @@ func _ready() -> void:
 		show_lobby()
 		if OS.has_environment("VAULT_MENU"):  # dev: open a menu page directly for screenshots
 			menu(OS.get_environment("VAULT_MENU"))
+	if OS.has_environment("VAULT_SHOT"):  # dev: save a true screenshot of the window after VAULT_SHOT_AT seconds, then quit
+		await get_tree().create_timer(float(OS.get_environment("VAULT_SHOT_AT")) if OS.has_environment("VAULT_SHOT_AT") else 3.0, true).timeout
+		await RenderingServer.frame_post_draw
+		get_viewport().get_texture().get_image().save_png(OS.get_environment("VAULT_SHOT"))
+		print("SHOT window=", DisplayServer.window_get_size(), " viewport=", get_viewport().get_visible_rect().size, " safe=", DisplayServer.get_display_safe_area())
+		get_tree().quit()
 
 
 func _build_look() -> void:
@@ -585,11 +597,15 @@ func _build_env() -> void:
 
 
 func gen_path() -> void:
-	# Forward runs (may climb or dip) alternate with short sideways runs, so the
-	# path winds without ever crossing itself.
+	# Forward runs alternate with short sideways runs, so the path winds without
+	# crossing itself. Each run also has a height profile: flat, a flight of
+	# stairs up or down, a rolling hump, one tall ledge to climb or one big drop
+	# to leap. On top of that every slab sits slightly higher or lower than its
+	# neighbours, like worn stepping stones.
 	path.clear()
 	dirs.clear()
 	yaws.clear()
+	base_y.clear()
 	var at := Vector3(0, 0.25, 0)
 	var sideways := false
 	var i := 0
@@ -598,18 +614,40 @@ func gen_path() -> void:
 		var sd: Vector2i = style.side
 		var n := rng.randi_range(sd.x, sd.y) if sideways else rng.randi_range(fwd.x, fwd.y)
 		var d := Vector3(0, 0, -1)
-		var rise := 0.0
 		if sideways:
 			var sgn := -signf(at.x) if absf(at.x) > 5.0 else (1.0 if rng.randf() < 0.5 else -1.0)
 			d = Vector3(sgn, 0, 0)
-		elif i > 0:
-			rise = style.rise[rng.randi_range(0, 3)]
+		var prof := "flat"
+		if i > 5 and i < END - 4:
+			if sideways:
+				prof = ["flat", "rolling", "stairs_up"][rng.randi_range(0, 2)]
+			else:
+				prof = style.prof[rng.randi_range(0, style.prof.size() - 1)]
+		if at.y < -1.0 and (prof == "stairs_down" or prof == "drop"):
+			prof = "stairs_up"  # never sink far below the start
+		var big_at := rng.randi_range(1, maxi(1, n - 2))
 		for k in n:
 			if i > END:
 				break
-			path.append(at)
+			var level := i < 5 or i >= END - 3  # start and gate stay flat
+			path.append(at + Vector3(0, 0.0 if level else rng.randf_range(-0.1, 0.1), 0))
+			base_y.append(at.y)
 			dirs.append(d)
 			yaws.append(atan2(-d.x, -d.z))
+			var rise := 0.0
+			match prof:
+				"stairs_up":
+					rise = 0.55
+				"stairs_down":
+					rise = -0.45
+				"rolling":
+					rise = sin(float(k) / n * TAU) * 0.55
+				"ledge":
+					rise = 1.7 if k == big_at else 0.0
+				"drop":
+					rise = -1.9 if k == big_at else 0.0
+			if level:
+				rise = 0.0
 			at += d * GAP + Vector3(0, rise, 0)
 			i += 1
 		sideways = not sideways
@@ -666,6 +704,7 @@ func build_world() -> void:
 	view.add_child(world)
 	slabs.clear()
 	pickups.clear()
+	rescues.clear()
 	reveals.clear()
 	hurdles.clear()
 	snakes.clear()
@@ -683,7 +722,7 @@ func build_world() -> void:
 	for k in bot_count + 1:
 		var r: Dictionary = ROSTER[k]
 		var p := {"name": r.name, "color": r.color, "off": r.off, "bot": k > 0,
-			"pos": 0, "out": false, "done": false, "danger": false, "skip": 0, "hearts": 3, "coins": 0, "revives": 2, "shield": false, "wounded": 0}
+			"pos": 0, "out": false, "done": false, "danger": false, "skip": 0, "hearts": 3, "coins": 0, "revives": 2, "shield": false, "wounded": 0, "banana": 0}
 		p["a"] = make_actor(r.color, "YOU" if k == 0 else "")
 		p.a.position = spot(p, 0)
 		players.append(p)
@@ -925,6 +964,31 @@ func count(text: String, c: Color) -> void:
 	tw.tween_property(lbl_count, "scale", Vector2.ONE, 0.22).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 	tw.tween_interval(0.3)
 	tw.tween_property(lbl_count, "modulate:a", 0.0, 0.22)
+
+
+func apply_safe_area() -> void:
+	# Fit the UI to the real screen: match the 2D viewport to the window's
+	# shape, and inset the HUD by the device's unsafe edges (notch, punch-hole
+	# camera, rounded corners, home-gesture bar). Runs again if the window changes.
+	var vis := get_viewport().get_visible_rect().size
+	ui_layer.size_2d_override = Vector2i(vis)
+	var inset := [0.0, 0.0, 0.0, 0.0]  # left, top, right, bottom, in UI units
+	if OS.has_feature("mobile"):
+		var screen := Vector2(DisplayServer.screen_get_size())
+		var area := DisplayServer.get_display_safe_area()
+		if screen.x > 0.0 and screen.y > 0.0 and area.size.x > 0:
+			var k := vis.y / screen.y
+			inset = [area.position.x * k, area.position.y * k, (screen.x - area.end.x) * k, (screen.y - area.end.y) * k]
+	if OS.has_environment("VAULT_SAFE"):  # dev: "top,bottom" to preview a notched phone on desktop
+		var parts := OS.get_environment("VAULT_SAFE").split(",")
+		inset = [0.0, float(parts[0]), 0.0, float(parts[1]) if parts.size() > 1 else 0.0]
+	safe.offset_left = inset[0]
+	safe.offset_top = inset[1]
+	safe.offset_right = -inset[2]
+	safe.offset_bottom = -inset[3]
+	lbl_big.pivot_offset = Vector2(vis.x / 2.0, 50)
+	lbl_count.pivot_offset = vis / 2.0
+	reward_rays.position.x = vis.x / 2.0
 
 
 func toggle_pause() -> void:
@@ -1269,6 +1333,14 @@ func _build_ui() -> void:
 	layer.size_2d_override_stretch = true
 	layer.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	uc.add_child(layer)
+	ui_layer = layer
+	# Everything a player must read or tap goes inside "safe", which is inset
+	# from the screen edges by the phone's notch / status area and home bar.
+	# Full-bleed things (dimmers, flashes, letterbox) stay on the layer itself.
+	safe = Control.new()
+	safe.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	safe.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	layer.add_child(safe)
 
 	var top := VBoxContainer.new()
 	top.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
@@ -1278,7 +1350,7 @@ func _build_ui() -> void:
 	top.offset_bottom = 300
 	top.add_theme_constant_override("separation", 8)
 	top.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	layer.add_child(top)
+	safe.add_child(top)
 
 	# one carved plaque per player: face, slab, lives, coins
 	var row := HBoxContainer.new()
@@ -1327,7 +1399,7 @@ func _build_ui() -> void:
 	lbl_hint.add_theme_color_override("font_color", Color("ffe08a"))
 	lbl_hint.add_theme_font_size_override("font_size", 34)
 	lbl_hint.visible = false
-	layer.add_child(lbl_hint)
+	safe.add_child(lbl_hint)
 
 	lbl_note = _label(22)  # weather and time notices
 	lbl_note.add_theme_color_override("font_color", Color("fff3c4"))
@@ -1391,7 +1463,7 @@ func _build_ui() -> void:
 	turn_bar.offset_top = -116
 	turn_bar.offset_bottom = -70
 	turn_bar.visible = false
-	layer.add_child(turn_bar)
+	safe.add_child(turn_bar)
 
 	# the die is the roll button
 	die = Control.new()
@@ -1403,7 +1475,7 @@ func _build_ui() -> void:
 	die.pivot_offset = Vector2(85, 85)
 	die.draw.connect(_draw_die)
 	die.gui_input.connect(_die_input)
-	layer.add_child(die)
+	safe.add_child(die)
 
 	var bottom := VBoxContainer.new()
 	bottom.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
@@ -1413,7 +1485,7 @@ func _build_ui() -> void:
 	bottom.offset_bottom = -80
 	bottom.add_theme_constant_override("separation", 12)
 	bottom.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	layer.add_child(bottom)
+	safe.add_child(bottom)
 	jump_bar = make_meter(Color("ff7043"))
 	jump_bar.modulate.a = 0.0
 	bottom.add_child(jump_bar)
@@ -1429,7 +1501,7 @@ func _build_ui() -> void:
 	me_bar.offset_bottom = -58
 	me_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	me_bar.draw.connect(_draw_me)
-	layer.add_child(me_bar)
+	safe.add_child(me_bar)
 	pause_btn = Button.new()
 	pause_btn.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
 	pause_btn.offset_left = -84
@@ -1442,7 +1514,7 @@ func _build_ui() -> void:
 	pause_btn.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
 	pause_btn.draw.connect(_draw_pause.bind(pause_btn))
 	pause_btn.pressed.connect(toggle_pause)
-	layer.add_child(pause_btn)
+	safe.add_child(pause_btn)
 	hud_nodes = [top, die, bottom, lbl_hint, turn_bar, lbl_big, me_bar, pause_btn]
 
 	lbl_count = _label(300)
@@ -1484,7 +1556,7 @@ func _build_ui() -> void:
 	lobby = Control.new()
 	lobby.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	lobby.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	layer.add_child(lobby)
+	safe.add_child(lobby)
 
 	results = PanelContainer.new()
 	results.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -1494,7 +1566,7 @@ func _build_ui() -> void:
 	results.offset_bottom = -330
 	results.add_theme_stylebox_override("panel", _tablet())
 	results.visible = false
-	layer.add_child(results)
+	safe.add_child(results)
 
 
 func _die_input(e: InputEvent) -> void:
@@ -1644,6 +1716,8 @@ func _draw_chip(k: int) -> void:
 			_icon(c, "ankh", Vector2(w - 26, oy + 12 + r * 15.0), 15, Color("5fe0ff"))
 	if p.skip > 0:
 		c.draw_string(ui_font, Vector2(w - 30, oy + 26), "zz", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color("9fb4ff"))
+	if p.banana > 0:
+		_icon(c, "banana", Vector2(6, oy + c.size.y - 36), 22, Color("ffe066"))
 	if p.wounded > 0:  # healing: red cross badge with own turns left
 		var bx := w - 34.0
 		var by := oy + c.size.y - 40.0
@@ -1672,6 +1746,8 @@ func _draw_me() -> void:
 		_icon(c, "ankh", Vector2(124 + r * 36.0, 62), 40, Color("5fe0ff"))
 	if p.shield:
 		_icon(c, "shield", Vector2(c.size.x - 52, 62), 40, Color("3f7fe0"))
+	if p.banana > 0:
+		_icon(c, "banana", Vector2(c.size.x - 52, 12), 40, Color("ffe066"))
 	if p.wounded > 0:
 		c.draw_string_outline(ui_font, Vector2(0, -8), "HEALING: %d" % p.wounded, HORIZONTAL_ALIGNMENT_CENTER, c.size.x, 22, 6, Color("2a2118"))
 		c.draw_string(ui_font, Vector2(0, -8), "HEALING: %d" % p.wounded, HORIZONTAL_ALIGNMENT_CENTER, c.size.x, 22, Color("ff8a7a"))
@@ -2046,9 +2122,31 @@ func stride(p: Dictionary, nxt: int) -> void:
 		style = "slide" if hurdles[nxt] == "beam" else ["vault", "flip"][rng.randi_range(0, 1)]
 	elif rng.randf() < 0.12:
 		style = ["roll", "spin", "long"][rng.randi_range(0, 2)]
+	var dy: float = spot(p, nxt).y - root.position.y
+	if dy > 0.9:  # a ledge: spring up, hands on top, swing the legs over
+		root.pose = "vault"
+		sfx.play("jump", -8.0)
+		popup(root.position, "CLIMB!", Color("ffe066"))
+		await hop(root, spot(p, nxt), 0.55 + dy * 0.25, 0.5)
+		root.pose = ""
+		squash(root)
+		sfx.play("land", -6.0)
+		burst(root.position, STONE.lightened(0.25), 6, 2.0)
+		return
+	if dy < -0.9:  # a drop: leap off and land heavily
+		root.air = true
+		sfx.play("jump", -9.0)
+		await hop(root, spot(p, nxt), 0.55, 0.45)
+		root.air = false
+		squash(root)
+		shake(0.2)
+		sfx.play("land", -2.0, 0.8)
+		burst(root.position, STONE.lightened(0.25), 12, 3.0)
+		return
 	if style == "":
-		# a running stride: fast and low, just clearing the gap between slabs
-		await hop(root, spot(p, nxt), 0.12, 0.3)
+		# a running stride: fast and low, just clearing the gap between slabs;
+		# it lifts more when the next slab is a step up
+		await hop(root, spot(p, nxt), 0.12 + maxf(0.0, dy) * 0.55 + (0.1 if dy < -0.2 else 0.0), 0.3 + absf(dy) * 0.08)
 		return
 	root.yaw_goal = NAN
 	var yaw: float = yaws[p.pos]
@@ -2231,6 +2329,100 @@ func collect(p: Dictionary) -> void:
 		earn(p, n)
 
 
+func _swing(t: float, mk: Node3D, a: Vector3, b: Vector3, pivot: Vector3, rider: Node3D, hold: Vector3) -> void:
+	# A pendulum on the vine: the gorilla's hands follow an arc about the pivot
+	# from grab point a to b. A rider, if any, is held against its chest.
+	var va := a - pivot
+	var vb := b - pivot
+	var hands := pivot + va.normalized().slerp(vb.normalized(), t) * lerpf(va.length(), vb.length(), t)
+	mk.position = hands - Vector3(0, 2.16, 0)
+	if rider:
+		rider.position = mk.position + hold
+
+
+func banana_rescue(p: Dictionary) -> void:
+	# The banana power-up. Just as a hit would finish the runner, a monkey
+	# swings in on a vine, plucks them up and carries them forward to the next
+	# safe slab, then sits and eats its banana. The swing is a real pendulum,
+	# and the vine a simulated rope.
+	p.banana -= 1
+	var root: Node3D = p.a
+	var i: int = p.pos
+	var d: int = mini(i + 2, END - 1)
+	while d < END - 1 and d < i + 6 and kinds[d] != "" and kinds[d] != "coin" and kinds[d] != "diamond":
+		d += 1
+	say("A gorilla swung in and carried %s to safety" % obj(p))
+	announce("BANANA!", Color("ffe066"))
+	slow_to = 0.6  # slowed, but the camera stays wide: a close-up would be all gorilla
+	sfx.play("monkey", 2.0, 0.55)  # pitched down: a big ape
+	shake(0.3)
+	root.scale = Vector3.ONE
+	root.visible = true
+	var from := root.position
+	var to := spot(p, d)
+	var ahead := Vector3(to.x - from.x, 0, to.z - from.z).normalized()
+	var hold := ahead * 0.8 + Vector3(0, 0.3, 0)  # the runner is held in front of its chest
+	var grab_a := from - hold + Vector3(0, 2.16, 0)  # where its hands are on the vine when it takes hold
+	var grab_b := to - hold + Vector3(0, 2.16, 0)
+	var span := Vector2(to.x - from.x, to.z - from.z).length()
+	var pivot := (grab_a + grab_b) / 2.0 + Vector3(0, maxf(6.0, span * 0.8), 0)
+	var mk: Node3D = Animals.build("gorilla", self)
+	world.add_child(mk)
+	mk.hang = true
+	var reach := maxf(pivot.distance_to(grab_a), pivot.distance_to(grab_b))
+	var vine := Strand.new(world, 12, reach * 1.02 / 12.0, Vector2(0.09, 0.09), mat(Color("4f8f3a")), pivot, (grab_b - pivot).normalized())
+	var entry := {"vine": vine, "pivot": pivot, "mk": mk}
+	rescues.append(entry)
+	var fly := Vector3(from.x - to.x, 0, from.z - to.z)
+	mk.rotation.y = atan2(-fly.x, -fly.z)
+	_swing(1.0, mk, grab_a, grab_b, pivot, null, hold)
+	root.look_up = true
+	# swings in from ahead, down to the runner
+	var tw := create_tween()
+	tw.tween_method(_swing.bind(mk, grab_a, grab_b, pivot, null, hold), 1.0, 0.0, 0.95).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	await tw.finished
+	root.look_up = false
+	root.hang = true
+	sfx.play("rope", -6.0)
+	sfx.play("punch", -6.0, 0.7)
+	burst(root.position + Vector3(0, 1.8, 0), Color("ffe066"), 10, 3.0)
+	mk.rotation.y = atan2(fly.x, fly.z)
+	root.rotation = Vector3(0, mk.rotation.y, 0)
+	# and back the other way, carrying them clear
+	var tw2 := create_tween()
+	tw2.tween_method(_swing.bind(mk, grab_a, grab_b, pivot, root, hold), 0.0, 1.0, 1.3).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	await tw2.finished
+	root.hang = false
+	p.pos = d
+	p.danger = false
+	await hop(root, to, 0.2, 0.18)
+	root.rotation = Vector3(0, yaws[d], 0)
+	squash(root)
+	sfx.play("land")
+	collect(p)
+	spot_off()
+	# the monkey drops down beside them and eats its reward
+	rescues.erase(entry)
+	for mesh in vine.meshes:
+		mesh.queue_free()
+	mk.hang = false
+	var seat: Vector3 = path[d] + Vector3(0.2, 0, -1.9).rotated(Vector3.UP, yaws[d])  # squats on the path just ahead
+	mk.rotation.y = yaws[d] + PI
+	await hop(mk, seat, 0.6, 0.35)
+	shake(0.3)
+	sfx.play("land", 0.0, 0.6)
+	var fruit := box(mk, Vector3(0.08, 0.24, 0.08), Vector3(0.26, 0.92, -0.24), Color("ffe066"))
+	fruit.rotation.z = 0.5
+	mk.eat = true
+	sfx.play("monkey", -4.0, 0.6)
+	refresh_ui()
+	await wait(1.1)
+	mk.eat = false
+	fruit.queue_free()
+	hop(mk, seat + Vector3(3.0, -5.0, 0).rotated(Vector3.UP, yaws[d]), 1.6, 0.5)
+	mk.create_tween().tween_callback(mk.queue_free).set_delay(0.6)
+
+
 func wound(p: Dictionary) -> void:
 	# hurt runners need time to heal, and fight worse until they have
 	p.wounded = HEAL_TURNS
@@ -2286,7 +2478,7 @@ func hud_lose(p: Dictionary, icon_id: String) -> void:
 
 
 func hurt(p: Dictionary) -> String:
-	# returns "blocked" (shield), "hit" (lost a heart) or "gone" (respawned or out)
+	# returns "blocked" (shield), "saved" (banana rescue), "hit" (lost a heart) or "gone" (respawned or out)
 	if p.shield:
 		p.shield = false
 		sfx.play("good")
@@ -2295,6 +2487,9 @@ func hurt(p: Dictionary) -> String:
 		refresh_ui()
 		await wait(0.4)
 		return "blocked"
+	if p.hearts <= 1 and p.banana > 0:  # this hit would be the last: the banana calls in a rescue
+		await banana_rescue(p)
+		return "saved"
 	p.hearts -= 1
 	wound(p)
 	sfx.play("bad")
@@ -2668,7 +2863,13 @@ func mystery(p: Dictionary) -> void:
 			sfx.play("good")
 			burst(a.position + Vector3(0, 0.8, 0), GOLD, 24, 5.0)
 			var prize := rng.randi_range(0, 2)
-			if prize == 0 and p.revives < 3:
+			if rng.randf() < 0.13 and p.banana == 0:  # rare
+				prize = 9
+			if prize == 9:
+				p.banana = 1
+				say("%s found a chest: a banana! A gorilla will save you once" % subj(p))
+				await reward(p, "banana", "BANANA!", Color("ffe066"))
+			elif prize == 0 and p.revives < 3:
 				p.revives += 1
 				say("%s found a chest: one extra respawn" % subj(p))
 				await reward(p, "ankh", "+1 RESPAWN", Color("5fe0ff"))
@@ -3012,7 +3213,9 @@ func boulder_turn() -> void:
 	burst(boulder.position - Vector3(0, 1.2, 0), Color("8a8478"), 14, 4.0)
 	for p in players:
 		p.danger = false
-	if crushed:
+	if crushed and last.banana > 0:  # snatched from under the boulder
+		await banana_rescue(last)
+	elif crushed:
 		last.a.scale = Vector3(1.3, 0.12, 1.3)
 		shake(0.7)
 		sfx.play("crush")
@@ -3161,6 +3364,10 @@ func menu(page: String) -> void:
 	var shade_rect := ColorRect.new()  # dims the scene so the menu reads clearly
 	shade_rect.color = Color(0.05, 0.03, 0.02, 0.38)
 	shade_rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	shade_rect.offset_top = -400    # spills past the safe inset so the whole screen dims
+	shade_rect.offset_bottom = 400
+	shade_rect.offset_left = -200
+	shade_rect.offset_right = 200
 	shade_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	lobby.add_child(shade_rect)
 
@@ -3226,7 +3433,7 @@ func menu(page: String) -> void:
 		"help":
 			title(v, "HOW TO PLAY", 50, GOLD)
 			title(v, "Roll the die. First to the temple gate wins. Stay ahead of the boulder.", 22, cream)
-			var rules := [["s_rope", "ROPE", "Swing far ahead"], ["s_snake", "COBRA", "Thrown far back"], ["s_tiger", "TIGER", "Lose a life, dragged back 4"], ["s_spike", "SPIKES", "Tap in time to jump, or lose a life"], ["s_crumble", "CRACKED SLAB", "You fall and lose a life"], ["s_mystery", "MYSTERY", "An animal or a treasure chest"], ["heart", "3 LIVES", "Lose them all: use a respawn"], ["heart_empty", "WOUNDED", "After any hit: weaker in fights for 2 turns"], ["ankh", "2 RESPAWNS", "None left: you are out"]]
+			var rules := [["s_rope", "ROPE", "Swing far ahead"], ["s_snake", "COBRA", "Thrown far back"], ["s_tiger", "TIGER", "Lose a life, dragged back 4"], ["s_spike", "SPIKES", "Tap in time to jump, or lose a life"], ["s_crumble", "CRACKED SLAB", "You fall and lose a life"], ["s_mystery", "MYSTERY", "An animal or a treasure chest"], ["heart", "3 LIVES", "Lose them all: use a respawn"], ["heart_empty", "WOUNDED", "After any hit: weaker in fights for 2 turns"], ["ankh", "2 RESPAWNS", "None left: you are out"], ["banana", "BANANA (RARE)", "A gorilla carries you clear of a fatal hit"]]
 			for g in rules:
 				var line := HBoxContainer.new()
 				line.add_theme_constant_override("separation", 14)
@@ -3277,7 +3484,7 @@ func menu(page: String) -> void:
 		"shop":
 			title(v, "POWER-UPS", 54, GOLD)
 			title(v, "Your coins: %d" % wallet, 30, cream)
-			var goods := [["shield", "SHIELD", "Blocks the next hit", 30], ["ankh", "RESPAWN", "One extra comeback", 50], ["heart", "EXTRA LIFE", "Start with 4 hearts", 20], ["trophy", "LUCKY DIE", "Re-roll once a game", 40]]
+			var goods := [["shield", "SHIELD", "Blocks the next hit", 30], ["ankh", "RESPAWN", "One extra comeback", 50], ["heart", "EXTRA LIFE", "Start with 4 hearts", 20], ["trophy", "LUCKY DIE", "Re-roll once a game", 40], ["banana", "BANANA", "A gorilla saves you once", 80]]
 			for g in goods:
 				var line := HBoxContainer.new()
 				line.add_theme_constant_override("separation", 14)
@@ -3530,6 +3737,10 @@ func _process(delta: float) -> void:
 					sfx.play("coin", -16.0, 0.7)
 				break
 	update_sky(delta)
+	for r in rescues:  # the vine a rescuing monkey hangs from
+		if is_instance_valid(r.mk):
+			var vn: Strand = r.vine
+			vn.step(minf(delta, 1.0 / 30.0), r.pivot, Vector3(0, -9, 0), Vector3.UP, r.mk.position + Vector3(0, 2.16, 0))
 	for c in circlers:
 		c.rotation.y += delta * float(c.get_meta("w"))
 	if reward_root.visible:

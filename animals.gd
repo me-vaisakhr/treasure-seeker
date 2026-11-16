@@ -20,19 +20,12 @@ static func build(kind: String, m, tint := Color.WHITE) -> Node3D:
 			return _tiger(m)
 		"cobra":
 			return _cobra(m)
+		"monkey":
+			return _monkey(m, false)
+		"gorilla":
+			return _monkey(m, true)
 	var n := Node3D.new()
 	match kind:
-		"monkey":
-			var brown := Color("7a5230")
-			m.box(n, Vector3(0.4, 0.5, 0.3), Vector3(0, 0.6, 0), brown)
-			m.box(n, Vector3(0.38, 0.36, 0.36), Vector3(0, 1.05, 0), brown)
-			m.box(n, Vector3(0.26, 0.22, 0.06), Vector3(0, 1.02, -0.19), Color("d9b48a"))
-			for x in [-0.28, 0.28]:
-				m.box(n, Vector3(0.12, 0.5, 0.12), Vector3(x, 0.65, 0), brown.darkened(0.1))
-				m.box(n, Vector3(0.14, 0.36, 0.14), Vector3(x * 0.5, 0.18, 0), brown.darkened(0.1))
-				m.box(n, Vector3(0.1, 0.14, 0.06), Vector3(x * 0.85, 1.08, 0), Color("d9b48a"))
-				m.box(n, Vector3(0.05, 0.05, 0.03), Vector3(x * 0.3, 1.07, -0.23), Color("1a1410"))
-			m.box(n, Vector3(0.08, 0.6, 0.08), Vector3(0, 0.75, 0.25), brown)
 		"chest":
 			var wood := Color("7a4f2a")
 			var gold := Color("e8b530")
@@ -194,6 +187,64 @@ static func _tiger(m) -> Node3D:
 		n.chain.append(seg)
 		if k < 5:
 			seg = _pivot(seg, Vector3(0, 0, 0.25))
+	return n
+
+
+static func _monkey(m, gorilla: bool) -> Node3D:
+	# A small langur-like monkey: round head with a pale face and ears, long
+	# jointed arms (longer than its legs), pale hands and feet, a six-piece tail.
+	# The gorilla is the same skeleton made huge and heavy: black coat, silver
+	# back, massive shoulders and arms, a crest and brow ridge, and no tail.
+	var n: Node3D = Rig.new()
+	n.kind = "monkey"
+	var brown := Color("2e2a2c") if gorilla else Color("7a5230")
+	var dark := brown.darkened(0.15)
+	var tan := Color("4a4448") if gorilla else Color("d9b48a")
+	var chest := _pivot(n, Vector3(0, 0.62, 0))
+	n.chest = chest
+	m.box(chest, Vector3(0.42, 0.5, 0.32), Vector3.ZERO, brown)
+	m.box(chest, Vector3(0.28, 0.34, 0.05), Vector3(0, -0.02, -0.17), tan)  # pale belly
+	var head := _pivot(chest, Vector3(0, 0.36, 0))
+	n.head = head
+	m.box(head, Vector3(0.4, 0.36, 0.36), Vector3(0, 0.12, 0), brown)
+	m.box(head, Vector3(0.28, 0.26, 0.06), Vector3(0, 0.1, -0.19), tan)
+	m.box(head, Vector3(0.16, 0.1, 0.08), Vector3(0, 0.03, -0.23), tan.darkened(0.12))  # muzzle
+	for x in [-0.24, 0.24]:
+		m.box(head, Vector3(0.1, 0.16, 0.06), Vector3(x, 0.14, 0.0), tan)       # ear
+		m.box(head, Vector3(0.05, 0.06, 0.03), Vector3(x * 0.3, 0.15, -0.23), Color("1a1410"))
+	for side in [-1, 1]:
+		var sh := _pivot(chest, Vector3(side * 0.26, 0.18, 0))
+		m.box(sh, Vector3(0.12, 0.32, 0.12), Vector3(0, -0.15, 0), dark)
+		var el := _pivot(sh, Vector3(0, -0.3, 0))
+		m.box(el, Vector3(0.11, 0.3, 0.11), Vector3(0, -0.14, 0), brown)
+		m.box(el, Vector3(0.14, 0.1, 0.14), Vector3(0, -0.33, 0), tan)          # hand
+		n.arms.append(sh)
+		n.elbows.append(el)
+		var hip := _pivot(chest, Vector3(side * 0.14, -0.26, 0))
+		m.box(hip, Vector3(0.14, 0.24, 0.14), Vector3(0, -0.11, 0), dark)
+		var knee := _pivot(hip, Vector3(0, -0.22, 0))
+		m.box(knee, Vector3(0.12, 0.22, 0.12), Vector3(0, -0.1, 0), brown)
+		m.box(knee, Vector3(0.14, 0.08, 0.2), Vector3(0, -0.24, -0.03), tan)    # foot
+		n.legs.append(hip)
+		n.shins.append(knee)
+		if gorilla:  # slabs of muscle on the upper arms and shoulders
+			m.box(sh, Vector3(0.22, 0.34, 0.22), Vector3(0, -0.14, 0), brown)
+			m.box(el, Vector3(0.18, 0.3, 0.18), Vector3(0, -0.14, 0), dark)
+			m.box(chest, Vector3(0.24, 0.2, 0.3), Vector3(side * 0.3, 0.24, 0), brown)
+	if gorilla:
+		m.box(chest, Vector3(0.6, 0.4, 0.4), Vector3(0, 0.1, 0), brown)                 # barrel chest
+		m.box(chest, Vector3(0.5, 0.36, 0.06), Vector3(0, 0.02, 0.2), Color("b9b6b2"))  # silver back
+		m.box(chest, Vector3(0.36, 0.22, 0.05), Vector3(0, 0.12, -0.2), Color("3a3538")) # chest plate
+		m.box(head, Vector3(0.24, 0.14, 0.3), Vector3(0, 0.36, 0.02), brown)            # crest
+		m.box(head, Vector3(0.36, 0.07, 0.08), Vector3(0, 0.2, -0.2), dark)             # brow ridge
+		n.scale = Vector3.ONE * 1.8
+		return n
+	var seg := _pivot(chest, Vector3(0, -0.2, 0.17))
+	for k in 6:
+		m.box(seg, Vector3(0.08, 0.08, 0.2), Vector3(0, 0, 0.09), brown if k % 2 == 0 else dark)
+		n.chain.append(seg)
+		if k < 5:
+			seg = _pivot(seg, Vector3(0, 0, 0.18))
 	return n
 
 

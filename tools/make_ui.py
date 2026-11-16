@@ -101,6 +101,14 @@ def main() -> None:
             sq = Image.new("RGBA", (side, side), (0, 0, 0, 0))
             sq.paste(icon, ((side - icon.width) // 2, (side - icon.height) // 2))
             sq.resize((size, size), Image.LANCZOS).save(UI / f"{name}.png")
+    for name in ("banana",):  # one icon per image
+        if (raw / f"{name}.png").exists():
+            icon = Image.fromarray(crop(key(raw / f"{name}.png")), "RGBA")
+            side = max(icon.size)
+            sq = Image.new("RGBA", (side, side), (0, 0, 0, 0))
+            sq.paste(icon, ((side - icon.width) // 2, (side - icon.height) // 2))
+            sq.resize((96, 96), Image.LANCZOS).save(UI / f"{name}.png")
+            print(name, "icon")
     for name, width in (("token", 220), ("die", 256)):
         if (raw / f"{name}.png").exists():
             im = Image.fromarray(crop(key(raw / f"{name}.png")), "RGBA")
