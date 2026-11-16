@@ -1,0 +1,15 @@
+# Godot's import cache and editor state (rebuilt on first open)
+.godot/
+
+# raw generator takes; the cut and levelled versions live in sfx/
+sfx_raw/
+
+# exports and platform build folders
+build/
+android/
+*.apk
+*.aab
+*.ipa
+
+# OS noise
+.DS_Store

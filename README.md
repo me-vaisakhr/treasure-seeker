@@ -1,2 +1,61 @@
-# treasure-seeker
-Extended game with snake and ladder mechanics
+# Treasure Seeker
+
+Extended game with snake and ladder mechanics.
+
+A dice race through a jungle to a temple's treasure, for mobile (portrait).
+One die, players take turns, first to the gate wins. The classic board is
+turned into a winding stone path over a misty forest: ropes carry you ahead,
+cobras throw you back, and a boulder rolls after whoever is last.
+
+Built with Godot 4.7. Everything in the 3D world is made from boxes in code;
+there are no model files.
+
+## Run
+
+Open the folder in Godot 4.7 and press Play, or from a terminal:
+
+    godot --path .
+
+## How it plays
+
+- Roll the die (tap anywhere). You have 8 seconds, or the turn is lost.
+- Special slabs: rope (swing ahead), cobra (thrown back), tiger ambush,
+  spikes (tap in time to jump), cracked slab, and "?" (an animal or a chest).
+- 3 lives. Lose them all and you spend a respawn at the last torch. No
+  respawns left and you are out.
+- After any hit you are wounded for 2 of your own turns, and fight worse.
+- Land on an occupied slab and you fight for it. The newcomer has the edge,
+  but can lose.
+- Coins: 10 buy a life. Chests can hold a shield, a life or a respawn.
+
+Play against 1 to 5 bots. Online multiplayer and the power-up shop are
+planned, and shown as "soon" in the lobby.
+
+## Files
+
+| File | What it holds |
+|---|---|
+| `main.gd` | Game rules, turn flow, world building, camera, HUD and menus |
+| `actor.gd` | The runner: jointed limbs, stride, spring physics, cloth |
+| `animal.gd`, `animals.gd` | Elephant, tiger, cobra, monkey, birds and their motion |
+| `nature.gd` | Terrain, forest, mountains, lake, waterfalls, mist |
+| `strand.gd` | Chain simulation used for cloth and ropes |
+| `sfx.gd` | Sound: synthesised effects, plus the clips in `sfx/` |
+| `ui/` | Logo, panels, buttons and icons |
+| `tools/` | Scripts that regenerate the sound clips and cut the UI art |
+
+## Developer switches
+
+Environment variables for testing:
+
+| Variable | Effect |
+|---|---|
+| `VAULT_AUTOPLAY=1` | A bot plays your seat |
+| `VAULT_BOTS=n` | Number of bots with autoplay |
+| `VAULT_TOD=0..1` | Time of day: 0 dawn, 0.25 noon, 0.5 sunset, 0.75 night |
+| `VAULT_RAIN=1` | Start in rain (with `VAULT_TOD`) |
+| `VAULT_MENU=page` | Open a lobby page: `main`, `bots`, `shop`, `help`, `ranks`, `settings` |
+
+## Credits
+
+See [CREDITS.md](CREDITS.md).
