@@ -21,7 +21,7 @@ Treasure Seeker (project folder `vault-run`).
 
 ## Sound
 
-`sfx/*.wav`, from freesound.org. Every one is licensed CC0 1.0 (public domain
+`sfx/*.wav` and the background music `sfx/music.ogg`, from freesound.org. Every one is licensed CC0 1.0 (public domain
 dedication); the licence is checked on each sound's own page when it is
 fetched (last run 2026-11-16). Fetched as the site's high-quality MP3
 previews, then trimmed, levelled and converted to mono WAV by
@@ -29,7 +29,7 @@ previews, then trimmed, levelled and converted to mono WAV by
 
 | File | Original title | Author | Source |
 |---|---|---|---|
-| `roar.wav` | Tiger Roar | lauramellis | https://freesound.org/s/263115/ |
+| `roar.wav` | Angry Tiger Fantasy | szegvari | https://freesound.org/s/546399/ |
 | `growl.wav` | Angry tiger.wav | schots | https://freesound.org/s/439280/ |
 | `snake.wav` | Snake hissing.mp3 | schreibsel | https://freesound.org/s/540162/ |
 | `trumpet.wav` | Elephant Trumpets Growls.flac | D.jones | https://freesound.org/s/527845/ |
@@ -45,6 +45,7 @@ previews, then trimmed, levelled and converted to mono WAV by
 | `rain.wav` | forest heavy rain loop.wav | Victormaa | https://freesound.org/s/671409/ |
 | `amb_day.wav` | Jungle ambience. Nagarhole Wildlife Sanctuary..wav | seventhsamurai | https://freesound.org/s/644886/ |
 | `amb_night.wav` | Frogs croaking & crickets at night in jungle swamp Africa | mycompasstv | https://freesound.org/s/462889/ |
+| `music.ogg` | Tribal Jungle Beat Fast Ethno World Experimental Drums Flute Marimba Cinematic Music Surround.wav | szegvari | https://freesound.org/s/608809/ |
 
 All other sounds (jumps, landings, chimes, rope, fire) are synthesised in code (`sfx.gd`).
 

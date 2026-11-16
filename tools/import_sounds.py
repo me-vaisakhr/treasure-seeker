@@ -26,7 +26,7 @@ AGENT = {"User-Agent": "Mozilla/5.0 (Macintosh)"}
 
 # game sound: (start at second, keep seconds, loop?, freesound id, uploader id, title, author)
 SOURCES = {
-    "roar": (0.0, 3.0, False, 263115, 672090, "Tiger Roar", "lauramellis"),
+    "roar": (0.0, 3.4, False, 546399, 2282212, "Angry Tiger Fantasy", "szegvari"),
     "growl": (0.0, 2.6, False, 439280, 954919, "Angry tiger.wav", "schots"),
     "snake": (0.0, 2.2, False, 540162, 7898982, "Snake hissing.mp3", "schreibsel"),
     "trumpet": (0.0, 2.6, False, 527845, 11431915, "Elephant Trumpets Growls.flac", "D.jones"),
@@ -43,6 +43,8 @@ SOURCES = {
     "amb_day": (5.0, 24.0, True, 644886, 3288322, "Jungle ambience. Nagarhole Wildlife Sanctuary..wav", "seventhsamurai"),
     "amb_night": (5.0, 22.0, True, 462889, 3902754, "Frogs croaking & crickets at night in jungle swamp Africa", "mycompasstv"),
 }
+# background music: (start at second, keep seconds, freesound id, uploader id, title, author) -> sfx/music.ogg, stereo
+MUSIC = (1.0, 34.0, 608809, 2282212, "Tribal Jungle Beat Fast Ethno World Experimental Drums Flute Marimba Cinematic Music Surround.wav", "szegvari")
 # loops are levelled by loudness rather than peak, so one stray bird call does not leave the bed too quiet
 LOOP_RMS = 0.08
 
@@ -73,6 +75,7 @@ def main() -> None:
         print("| File | Original title | Author | Source |\n|---|---|---|---|")
         for name, (_s, _k, _l, sound, _u, title, author) in SOURCES.items():
             print(f"| `{name}.wav` | {title} | {author} | https://freesound.org/s/{sound}/ |")
+        print(f"| `music.ogg` | {MUSIC[4]} | {MUSIC[5]} | https://freesound.org/s/{MUSIC[2]}/ |")
         return
     cache = Path(sys.argv[1])
     cache.mkdir(parents=True, exist_ok=True)
@@ -95,6 +98,25 @@ def main() -> None:
         out = tidy(np.asarray(data, dtype=np.float64), start, seconds, loop)
         sf.write(OUT / f"{name}.wav", out, RATE, subtype="PCM_16")
         print(f"{name}.wav  {len(out) / RATE:.1f}s  CC0 ok  ({title})")
+    if not only or "music" in only:
+        start, seconds, sound, user, title, _author = MUSIC
+        page = fetch(PAGE.format(sound=sound)).decode("utf-8", "replace")
+        if "Creative Commons 0" not in page and "publicdomain/zero" not in page:
+            print(f"SKIPPED music: sound {sound} is not CC0 on its page")
+            return
+        mp3 = cache / f"{sound}.mp3"
+        if not mp3.exists():
+            mp3.write_bytes(fetch(PREVIEW.format(folder=sound // 1000, sound=sound, user=user)))
+        wav = cache / f"{sound}_st.wav"
+        subprocess.run(["afconvert", "-f", "WAVE", "-d", "LEI16@44100", "-c", "2", str(mp3), str(wav)], check=True)
+        data, rate = sf.read(wav)
+        data = data[int(start * rate):][: int(seconds * rate)]
+        blend = rate  # one second of tail folded into the head, so the loop is seamless
+        ramp = np.linspace(0.0, 1.0, blend)[:, None]
+        data = np.concatenate([data[:blend] * ramp + data[-blend:] * (1.0 - ramp), data[blend:-blend]])
+        data = data / max(np.abs(data).max(), 1e-6) * 0.85
+        sf.write(OUT / "music.ogg", data, rate, format="OGG", subtype="VORBIS")
+        print(f"music.ogg  {len(data) / rate:.1f}s  CC0 ok  ({title})")
 
 
 if __name__ == "__main__":

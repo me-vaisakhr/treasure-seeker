@@ -11,6 +11,7 @@ var chirp_in := 3.0
 var rain_player: AudioStreamPlayer
 var day_player: AudioStreamPlayer
 var night_player: AudioStreamPlayer
+var music_player: AudioStreamPlayer
 
 
 func _ready() -> void:
@@ -73,6 +74,25 @@ func _ready() -> void:
 	night_player.volume_db = -60.0
 	add_child(night_player)
 	night_player.play()
+
+
+func start_music() -> void:
+	# background music, if sfx/music.ogg is there: loops quietly under everything
+	if music_player or not ResourceLoader.exists("res://sfx/music.ogg"):
+		return
+	var s: AudioStreamOggVorbis = load("res://sfx/music.ogg").duplicate()
+	s.loop = true
+	music_player = AudioStreamPlayer.new()
+	music_player.stream = s
+	music_player.volume_db = -15.0
+	add_child(music_player)
+	music_player.play()
+
+
+func duck(on: bool) -> void:
+	# music steps back during close-up moments so roars and hits come through
+	if music_player:
+		create_tween().tween_property(music_player, "volume_db", -24.0 if on else -15.0, 0.4)
 
 
 func looped(path: String, fallback: AudioStream) -> AudioStream:

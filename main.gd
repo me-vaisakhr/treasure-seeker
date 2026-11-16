@@ -233,6 +233,7 @@ func _ready() -> void:
 	autoplay = OS.get_environment("VAULT_AUTOPLAY") != ""
 	sfx = Sfx.new()
 	add_child(sfx)
+	sfx.start_music.call_deferred()
 	_build_look()
 	_build_env()
 	_build_ui()
@@ -401,11 +402,13 @@ func spotlight(p: Dictionary, slow := 0.45) -> void:
 	zoom_p = p
 	zoom_to = 1.0
 	slow_to = slow
+	sfx.duck(true)
 
 
 func spot_off() -> void:
 	zoom_to = 0.0
 	slow_to = 1.0
+	sfx.duck(false)
 
 
 func flame(parent: Node3D, at: Vector3) -> void:
@@ -841,7 +844,7 @@ func make_slab(i: int, kind: String) -> Node3D:
 	num.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
 	num.modulate = Color("2a2118")
 	num.rotation_degrees.x = -90
-	num.position = Vector3(0, 0.27, 0.45)
+	num.position = Vector3(0, 0.27, 0)  # centred on the tile
 	root.add_child(num)
 
 	if kind == "" and i > 5 and i < END - 1 and i % 5 != 0 and rng.randf() < 0.24:
@@ -1045,6 +1048,13 @@ func apply_safe_area() -> void:
 	# Fit the UI to the real screen: match the 2D viewport to the window's
 	# shape, and inset the HUD by the device's unsafe edges (notch, punch-hole
 	# camera, rounded corners, home-gesture bar). Runs again if the window changes.
+	if OS.has_feature("web"):
+		# In a wide browser window the game keeps its portrait frame (bars at
+		# the sides) instead of stretching; on a phone it still fills the screen.
+		var ws := DisplayServer.window_get_size()
+		var want := Window.CONTENT_SCALE_ASPECT_KEEP if ws.x > ws.y * 0.8 else Window.CONTENT_SCALE_ASPECT_EXPAND
+		if get_tree().root.content_scale_aspect != want:
+			get_tree().root.content_scale_aspect = want
 	var vis := get_viewport().get_visible_rect().size
 	ui_layer.size_2d_override = Vector2i(vis)
 	var inset := [0.0, 0.0, 0.0, 0.0]  # left, top, right, bottom, in UI units
@@ -2139,7 +2149,7 @@ func take_turn(p: Dictionary) -> void:
 			await wait(0.5)
 	set_die(0)
 	spot_off()
-	await wait(0.1)
+	await wait(1.0)  # hold on this runner so the result can sink in before the camera moves on
 
 
 func show_trail(p: Dictionary, n: int) -> Node3D:

@@ -3,6 +3,7 @@
 
 # raw generator takes; the cut and levelled versions live in sfx/
 sfx_raw/
+sfx_preview/
 
 # exports and platform build folders
 build/

@@ -31,6 +31,17 @@ Open the folder in Godot 4.7 and press Play, or from a terminal:
 Play against 1 to 5 bots. Online multiplayer and the power-up shop are
 planned, and shown as "soon" in the lobby.
 
+## Play in a browser
+
+https://me-vaisakhr.github.io/treasure-seeker/
+
+The web build is made with
+
+    godot --headless --path . --export-release Web build/web/index.html
+
+and published from the `gh-pages` branch. It is built without threads, which
+GitHub Pages requires. On a wide window the game keeps a portrait frame.
+
 ## Android build
 
 Needs Godot's export templates, an Android SDK and Java 17 set in the editor
