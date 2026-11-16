@@ -31,6 +31,7 @@ var aim := 0.0       # cobra: yaw (local) towards its target
 var crouch := 0.0    # tiger: 0 standing .. 1 low stalking crouch
 var hang := false    # monkey: swinging from a vine by its hands
 var eat := false     # monkey: munching, one hand to its mouth
+var heavy := false   # gorilla: stands on its knuckles, leaning forward
 var swipe := 0.0     # tiger: 0..1 one paw strike with the right foreleg
 
 var t := 0.0
@@ -153,6 +154,11 @@ func _monkey(delta: float, flat: float, speed: float, k: float) -> void:
 		var elbow := 0.5
 		var thigh := 1.35  # squatting
 		var shin := -2.0
+		if heavy:  # knuckle stance: straight arms planted ahead, short bent legs
+			arm = 0.42
+			elbow = 0.06
+			thigh = 0.95
+			shin = -1.5
 		if hang:
 			arm = 3.05 + sin(t * 3.0 + i) * 0.06
 			elbow = 0.12
@@ -166,7 +172,10 @@ func _monkey(delta: float, flat: float, speed: float, k: float) -> void:
 		elif eat and i == 1:  # hand to mouth, munching
 			arm = 2.3 + sin(t * 14.0) * 0.12
 			elbow = 2.0
-		elif fmod(t + 1.0, 4.0) < 0.9 and i == 0:  # a quick scratch of the ribs
+		elif heavy and fmod(t, 5.0) < 0.9:  # beats its chest now and then
+			arm = 1.5
+			elbow = 2.1 + sin(t * 30.0 + i * PI) * 0.35
+		elif not heavy and fmod(t + 1.0, 4.0) < 0.9 and i == 0:  # a quick scratch of the ribs
 			arm = 0.9
 			elbow = 1.9 + sin(t * 26.0) * 0.25
 		arms[i].rotation.x = lerpf(arms[i].rotation.x, arm, k)
@@ -177,10 +186,14 @@ func _monkey(delta: float, flat: float, speed: float, k: float) -> void:
 	var sway := 0.0
 	if hang:
 		sway = clampf(-lag * 1.6, -0.7, 0.7)  # body lags the swing, then overshoots
-	chest.rotation.x = lerpf(chest.rotation.x, sway + (0.0 if hang else 0.18), k)
-	chest.position.y = 0.62 + (absf(sin(phase)) * 0.12 * amp if not hang else 0.0) + sin(t * 2.4) * 0.012 - (0.0 if hang or amp > 0.1 else 0.2)
+	var upright := heavy and fmod(t, 5.0) < 0.9 and not hang and amp < 0.1  # rears up to beat its chest
+	var lean := 0.0 if hang else (0.18 if not heavy else (0.12 if upright else 0.5))
+	chest.rotation.x = lerpf(chest.rotation.x, sway + lean, k)
+	# height that keeps the feet on the ground in each stance
+	var rest := 0.62 if hang or amp > 0.1 else (0.66 if heavy else 0.56)
+	chest.position.y = lerpf(chest.position.y, rest + (absf(sin(phase)) * 0.12 * amp if not hang else 0.0) + sin(t * 2.4) * 0.012, k)
 	head.rotation.y = sin(t * 1.1) * 0.5 * (0.0 if hang or amp > 0.1 else 1.0)
-	head.rotation.x = lerpf(head.rotation.x, -sway * 0.6 + (0.25 if eat else 0.0), k)
+	head.rotation.x = lerpf(head.rotation.x, -sway * 0.6 - lean * 0.8 + (0.25 if eat else 0.0), k)  # keeps looking ahead
 	for i in chain.size():  # tail: an S that curls and streams behind a swing
 		chain[i].rotation.x = -0.32 + sin(t * 2.6 + i * 0.8) * 0.16 + lag * 0.5
 		chain[i].rotation.y = sin(t * 1.9 + i * 0.7) * 0.22

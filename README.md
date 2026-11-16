@@ -31,6 +31,16 @@ Open the folder in Godot 4.7 and press Play, or from a terminal:
 Play against 1 to 5 bots. Online multiplayer and the power-up shop are
 planned, and shown as "soon" in the lobby.
 
+## Android build
+
+Needs Godot's export templates, an Android SDK and Java 17 set in the editor
+settings. Then:
+
+    godot --headless --path . --export-debug Android build/android/treasure-seeker.apk
+
+The app runs in immersive full screen, portrait. The HUD keeps clear of
+notches and the home bar.
+
 ## Files
 
 | File | What it holds |
@@ -40,9 +50,9 @@ planned, and shown as "soon" in the lobby.
 | `animal.gd`, `animals.gd` | Elephant, tiger, cobra, monkey, birds and their motion |
 | `nature.gd` | Terrain, forest, mountains, lake, waterfalls, mist |
 | `strand.gd` | Chain simulation used for cloth and ropes |
-| `sfx.gd` | Sound: synthesised effects, plus the clips in `sfx/` |
+| `sfx.gd` | Sound: synthesised effects, plus the CC0 recordings in `sfx/` |
 | `ui/` | Logo, panels, buttons and icons |
-| `tools/` | Scripts that regenerate the sound clips and cut the UI art |
+| `tools/` | Scripts that fetch the sound recordings and cut the UI art |
 
 ## Developer switches
 
@@ -55,6 +65,9 @@ Environment variables for testing:
 | `VAULT_TOD=0..1` | Time of day: 0 dawn, 0.25 noon, 0.5 sunset, 0.75 night |
 | `VAULT_RAIN=1` | Start in rain (with `VAULT_TOD`) |
 | `VAULT_MENU=page` | Open a lobby page: `main`, `bots`, `shop`, `help`, `ranks`, `settings` |
+| `VAULT_SHOT=file` | Save a screenshot after `VAULT_SHOT_AT` seconds (default 3) and quit |
+| `VAULT_SAFE=top,bottom` | Preview a notch / home-bar inset on desktop |
+| `VAULT_ZOO=a,b` | Line animals up for inspection: `monkey`, `gorilla`, `tiger`, `elephant`, `cobra` |
 
 ## Credits
 

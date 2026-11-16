@@ -201,6 +201,8 @@ var lbl_note: Label
 var turn_bar: Control
 var big_tw: Tween
 var msg_tw: Tween
+var pin_at := {}      # player name -> where their pin is drawn on the race bar (slabs, eased)
+var pin_bo := 0.0     # the boulder's pin
 var flash_rect: ColorRect  # full-screen tint when you are hurt or reborn
 var note_tw: Tween
 var tigers := {}    # slab index -> {node, cool}
@@ -248,6 +250,22 @@ func _ready() -> void:
 		show_lobby()
 		if OS.has_environment("VAULT_MENU"):  # dev: open a menu page directly for screenshots
 			menu(OS.get_environment("VAULT_MENU"))
+	if OS.has_environment("VAULT_ZOO"):  # dev: animals lined up side-on for inspection ("monkey,gorilla,tiger,elephant,cobra")
+		lobby.visible = false
+		in_lobby = false
+		in_cine = true
+		var names := OS.get_environment("VAULT_ZOO").split(",")
+		var side := dirs[2].cross(Vector3.UP)
+		var mid := path[2] + Vector3(0, 0.0, 0)
+		cine_pos = mid + side * (3.2 + names.size() * 1.3) + Vector3(0, 1.6, 0)
+		cine_look = mid + Vector3(0, 1.0, 0)
+		for k in names.size():
+			var an: Node3D = Animals.build(names[k], self)
+			world.add_child(an)
+			an.position = path[2] - dirs[2] * ((k - (names.size() - 1) / 2.0) * 2.4)
+			an.rotation.y = atan2(-side.x, -side.z) + 0.5  # three-quarter view towards the camera
+			if "wake_to" in an:
+				an.wake_to = 1.0
 	if OS.has_environment("VAULT_SHOT"):  # dev: save a true screenshot of the window after VAULT_SHOT_AT seconds, then quit
 		await get_tree().create_timer(float(OS.get_environment("VAULT_SHOT_AT")) if OS.has_environment("VAULT_SHOT_AT") else 3.0, true).timeout
 		await RenderingServer.frame_post_draw
@@ -705,6 +723,8 @@ func build_world() -> void:
 	slabs.clear()
 	pickups.clear()
 	rescues.clear()
+	pin_at.clear()
+	pin_bo = float(bo)
 	reveals.clear()
 	hurdles.clear()
 	snakes.clear()
@@ -778,6 +798,7 @@ func make_slab(i: int, kind: String) -> Node3D:
 	var base := STONE
 	match kind:
 		"crumble": base = STONE.darkened(0.07)  # looks almost like any other slab
+		"rope": base = Color("9fd98a")  # green: a way forward
 		"snake": base = SNAKE
 		"mystery": base = MYSTERY
 	if i == END:
@@ -864,10 +885,19 @@ func make_slab(i: int, kind: String) -> Node3D:
 			box(root, Vector3(0.5, 0.08, 0.1), Vector3(0.55, 0.3, 0.6), Color("f1ecdc")).rotation.y = 0.7
 			box(root, Vector3(0.4, 0.08, 0.1), Vector3(-0.6, 0.3, 0.5), Color("f1ecdc")).rotation.y = -0.5
 			box(root, Vector3(0.22, 0.2, 0.22), Vector3(0.7, 0.36, -0.6), Color("f1ecdc"))
+			for k in 4:  # big paw prints crossing the slab
+				var px := -0.55 + k * 0.36
+				var pz := 0.55 if k % 2 == 0 else 0.2
+				box(root, Vector3(0.2, 0.03, 0.2), Vector3(px, 0.27, pz), Color("3a2414"))
+				for tz in [-0.1, 0.0, 0.1]:
+					box(root, Vector3(0.07, 0.03, 0.07), Vector3(px + tz, 0.27, pz - 0.17), Color("3a2414"))
 		"rope":
 			_post(root)
 			var green := Color("52d273")
 			box(root, Vector3.ONE * 0.3, Vector3(-1.12, 4.4, 0), green).material_override = mat(green, true)
+			for k in 3:  # a bold arrow on the slab, pointing onward
+				box(root, Vector3(1.2 - k * 0.42, 0.05, 0.2), Vector3(0, 0.27, -0.15 - k * 0.24), Color("1f9e4a")).material_override = mat(Color("1f9e4a"), true)
+			box(root, Vector3(0.26, 0.05, 0.6), Vector3(0, 0.27, 0.3), Color("1f9e4a")).material_override = mat(Color("1f9e4a"), true)
 		"mystery":
 			var q := Label3D.new()
 			q.text = "?"
@@ -893,10 +923,9 @@ func make_slab(i: int, kind: String) -> Node3D:
 
 	# Every special slab is ringed in a meaning colour (red danger, green help,
 	# purple mystery) and carries a floating picture sign.
-	# The tiger slab gets neither: it stays an ambush. Rims and signs start
-	# hidden and appear only when a runner comes close, so the road far ahead
-	# keeps its surprises.
-	var sign_id: String = {"snake": "s_snake", "rope": "s_rope", "crumble": "s_crumble", "spike": "s_spike", "mystery": "s_mystery"}.get(kind, "")
+	# Rims, signs and captions start hidden and appear only when a runner comes
+	# close, so the road far ahead keeps its surprises but what is next is clear.
+	var sign_id: String = {"snake": "s_snake", "rope": "s_rope", "crumble": "s_crumble", "spike": "s_spike", "mystery": "s_mystery", "tiger": "s_tiger"}.get(kind, "")
 	if sign_id != "":
 		var rc: Color = {"rope": Color("3fe07a"), "mystery": Color("b06aff"), "crumble": Color("ff9a2e")}.get(kind, Color("ff4a3a"))
 		var hidden: Array[Node3D] = []
@@ -907,6 +936,7 @@ func make_slab(i: int, kind: String) -> Node3D:
 			r2.material_override = mat(rc, true)
 			hidden.append(r1)
 			hidden.append(r2)
+		var sign_y := 2.5  # just above head height, over its own slab
 		var board: Sprite3D = null
 		var st := ui_tex(sign_id)
 		if st:
@@ -914,13 +944,44 @@ func make_slab(i: int, kind: String) -> Node3D:
 			board.texture = st
 			board.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 			board.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
-			board.pixel_size = 0.95 / st.get_width()
-			board.position = Vector3(0, 5.3 if kind == "rope" else 3.1, 0)
+			board.pixel_size = 0.58 / st.get_width()
+			board.position = Vector3(0, sign_y, 0)
 			root.add_child(board)
 			hidden.append(board)
+		# a caption under the sign says what the slab does
+		var words := ""
+		match kind:
+			"rope": words = "ROPE +%d" % (rope_to[i] - i)
+			"snake": words = "COBRA -%d" % (i - snake_to[i])
+			"tiger": words = "TIGER!"
+			"spike": words = "JUMP!"
+			"crumble": words = "CRACKED"
+			"mystery": words = "MYSTERY"
+		var cap := Label3D.new()
+		cap.text = words
+		cap.font = ui_font
+		cap.font_size = 48
+		cap.outline_size = 16
+		cap.pixel_size = 0.0075
+		cap.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		cap.no_depth_test = true
+		cap.modulate = rc.lightened(0.35)
+		cap.position = Vector3(0, sign_y + 0.55, 0)
+		root.add_child(cap)
+		hidden.append(cap)
+		if kind == "tiger":  # eyes watching from a bush beside the path
+			var lurk := Node3D.new()
+			lurk.position = Vector3(2.3, -0.2, 0.1)
+			root.add_child(lurk)
+			box(lurk, Vector3(1.5, 1.2, 1.3), Vector3(0, 0.3, 0), Color("1f5a2c"))
+			box(lurk, Vector3(1.0, 0.7, 1.0), Vector3(0.1, 1.1, 0), Color("2a7036"))
+			box(lurk, Vector3(0.7, 0.6, 0.1), Vector3(-0.72, 0.75, 0), Color("0a120c"))  # dark hollow
+			for ez in [-0.17, 0.17]:
+				box(lurk, Vector3(0.06, 0.1, 0.13), Vector3(-0.8, 0.82, ez), Color("ffe23a")).material_override = mat(Color("ffe23a"), true)
+			hidden.append(lurk)
 		for n in hidden:
 			n.visible = false
-		reveals[i] = {"nodes": hidden, "board": board, "radius": 2 if kind == "crumble" else 3, "shown": false}
+		reveals[i] = {"nodes": hidden, "board": board, "radius": 2 if kind == "crumble" else 3, "shown": false, "kind": kind, "cap": cap}
 	return root
 
 
@@ -952,6 +1013,20 @@ func _build_cave() -> void:
 	box(c, Vector3(3.5, 4.7, 0.3), Vector3(0, 2.55, mz + 9.8), Color("0c0a08"))
 	box(c, Vector3(3.5, 0.2, 10), Vector3(0, 4.95, mz + 5.0), Color("0c0a08"))
 	box(c, Vector3(14.8, 0.6, 10.4), Vector3(0, 11.1, mz + 5.0), shade(MOSS))
+	# The cave is the face of a cliff, not a floating block: rock runs down to
+	# the valley floor beneath it, back into the mountain behind it, and out to
+	# both sides in stepped shoulders. A ledge juts under the doorway.
+	box(c, Vector3(15.0, 40, 19), Vector3(0, -20.4, mz + 9.5), shade(rock))
+	box(c, Vector3(15.0, 13, 9.5), Vector3(0, 6.0, mz + 14.6), shade(rock))
+	box(c, Vector3(5.2, 1.0, 2.2), Vector3(0, -0.75, mz - 0.9), shade(rock.lightened(0.08)))
+	for side in [-1, 1]:
+		box(c, Vector3(4.5, 46, 15), Vector3(side * 9.4, -17.5, mz + 9.0), shade(rock.darkened(0.06)))
+		box(c, Vector3(3.6, 38, 11), Vector3(side * 13.0, -22.5, mz + 10.0), shade(rock.darkened(0.12)))
+		box(c, Vector3(4.6, 0.6, 15.2), Vector3(side * 9.4, 5.7, mz + 9.0), shade(MOSS))
+		for v in 3:  # vines down the cliff face
+			box(c, Vector3(0.18, rng.randf_range(3, 9), 0.18), Vector3(side * rng.randf_range(2.6, 11.0), -3.0 - v * 2.0, mz - 0.15), shade(MOSS))
+	for k in 5:  # rubble and ledges on the face below the door
+		box(c, Vector3(rng.randf_range(1.5, 4.0), rng.randf_range(0.6, 1.4), 1.2), Vector3(rng.randf_range(-5, 5), -3.0 - k * 3.2, mz - 0.4), shade(rock.lightened(0.05)))
 
 
 func count(text: String, c: Color) -> void:
@@ -1004,7 +1079,7 @@ func restart_race() -> void:
 	boot_bots = bot_count
 	get_tree().paused = false
 	Engine.time_scale = 1.0
-	get_tree().reload_current_scene()
+	get_tree().reload_current_scene.call_deferred()  # after this tap has finished being handled
 
 
 func exit_to_lobby() -> void:
@@ -1012,7 +1087,7 @@ func exit_to_lobby() -> void:
 	boot_bots = 0
 	get_tree().paused = false
 	Engine.time_scale = 1.0
-	get_tree().reload_current_scene()
+	get_tree().reload_current_scene.call_deferred()  # after this tap has finished being handled
 
 
 func _draw_pause(b: Control) -> void:
@@ -1187,6 +1262,12 @@ func _build_ropes() -> void:
 	for i in rope_to:
 		var d: int = rope_to[i]
 		_post(slabs[d])
+		# the far end is marked too: green cap on its post and green corners on the slab
+		var green := Color("52d273")
+		box(slabs[d], Vector3.ONE * 0.3, Vector3(-1.12, 4.4, 0), green).material_override = mat(green, true)
+		for cx in [-0.85, 0.85]:
+			for cz in [-0.85, 0.85]:
+				box(slabs[d], Vector3(0.3, 0.06, 0.3), Vector3(cx, 0.28, cz), green).material_override = mat(green, true)
 		var a := rope_end(i)
 		var b := rope_end(d)
 		var dist := a.distance_to(b)
@@ -1367,7 +1448,7 @@ func _build_ui() -> void:
 		chips.append(chip)
 
 	track = Control.new()
-	track.custom_minimum_size = Vector2(0, 24)
+	track.custom_minimum_size = Vector2(0, 44)
 	track.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	track.draw.connect(_draw_track)
 	top.add_child(track)
@@ -1671,9 +1752,36 @@ func _face(c: Control, at: Vector2, s: float, col: Color, rim: Color) -> void:
 	c.draw_rect(Rect2(at + Vector2(27, 26) * f, Vector2(5, 6) * f), Color("2a2118"))
 
 
+func standings() -> Dictionary:
+	# live ranking: finishers in order, then runners by how far along, then those knocked out
+	var order: Array[Dictionary] = []
+	order.append_array(finished)
+	var rest: Array[Dictionary] = []
+	for p in players:
+		if not p.done:
+			rest.append(p)
+	rest.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return (not a.out and b.out) or (a.out == b.out and a.pos > b.pos))
+	order.append_array(rest)
+	var out := {}
+	for k in order.size():
+		out[order[k].name] = k + 1
+	return out
+
+
+func _medal(c: Control, at: Vector2, rank: int, size: float) -> void:
+	# round rank medal: gold, silver, bronze, then plain
+	var col: Color = [GOLD, Color("d9dde2"), Color("d08a4a")][rank - 1] if rank <= 3 else Color("7a6a55")
+	var r := size / 2.0
+	c.draw_circle(at + Vector2(r, r), r + 2.0, Color("2a2118"))
+	c.draw_circle(at + Vector2(r, r), r, col)
+	c.draw_circle(at + Vector2(r, r) - Vector2(r, r) * 0.3, r * 0.3, col.lightened(0.45))
+	c.draw_string(ui_font, at + Vector2(0, size * 0.74), str(rank), HORIZONTAL_ALIGNMENT_CENTER, size, int(size * 0.72), Color("2a2118"))
+
+
 func _draw_chip(k: int) -> void:
-	# Player token. Wide (up to 4 players): face on the left, slab, hearts and
-	# respawns on the right. Narrow (5-6 players): stacked, smaller.
+	# Player plaque on the live leaderboard. Wide (up to 4 players): face and
+	# rank medal on the left; name, slab, lives and respawns filling the rest.
+	# Narrow (5-6 players): stacked.
 	if k >= players.size():
 		return
 	var c := chips[k]
@@ -1688,25 +1796,33 @@ func _draw_chip(k: int) -> void:
 		plate = _round(col.darkened(0.45) if on else Color("2e2118"), 14, 5, Color("ffd76a") if on else Color("8a6a3a"))
 	c.draw_style_box(plate, Rect2(0, oy, w, c.size.y - 8))
 	var rim := Color("5fe0ff") if p.shield else (Color("fff8e1") if k == 0 else dark)
+	var rank: int = standings().get(p.name, k + 1)
 	var state := "%d" % p.pos
 	if p.out:
 		state = "OUT"
 	elif p.done:
-		state = "#%d" % (finished.find(p) + 1)
+		state = "DONE"
 	var n := maxi(3, p.hearts)
 	if w >= 140.0:
-		_face(c, Vector2(16, oy + 18), 50, col, rim)
-		var rx := 78.0
-		c.draw_string_outline(ui_font, Vector2(rx, oy + 36), state, HORIZONTAL_ALIGNMENT_LEFT, -1, 28, 6, dark)
-		c.draw_string(ui_font, Vector2(rx, oy + 36), state, HORIZONTAL_ALIGNMENT_LEFT, -1, 28, GOLD)
+		c.draw_rect(Rect2(14, oy + 14, w - 28, c.size.y - 36), Color(col.r, col.g, col.b, 0.28 if on else 0.14))  # colour wash
+		_face(c, Vector2(18, oy + 22), 46, col, rim)
+		_medal(c, Vector2(48, oy + 52), rank, 24)
+		var rx := 80.0
+		c.draw_string_outline(ui_font, Vector2(rx, oy + 36), p.name, HORIZONTAL_ALIGNMENT_LEFT, -1, 19, 5, dark)
+		c.draw_string(ui_font, Vector2(rx, oy + 36), p.name, HORIZONTAL_ALIGNMENT_LEFT, -1, 19, Color("fff8e1") if on else Color("d8c9a0"))
+		c.draw_string_outline(ui_font, Vector2(w - 70, oy + 40), state, HORIZONTAL_ALIGNMENT_RIGHT, 54, 26, 6, dark)
+		c.draw_string(ui_font, Vector2(w - 70, oy + 40), state, HORIZONTAL_ALIGNMENT_RIGHT, 54, 26, GOLD)
 		for h in n:
-			_icon(c, "heart" if h < p.hearts else "heart_empty", Vector2(rx + h * 16.0, oy + 42), 17, Color("e2463a") if h < p.hearts else Color("5a4636"))
+			_icon(c, "heart" if h < p.hearts else "heart_empty", Vector2(rx + h * 18.0, oy + 46), 19, Color("e2463a") if h < p.hearts else Color("5a4636"))
 		for r in p.revives:
-			_icon(c, "ankh", Vector2(rx + r * 17.0, oy + 61), 18, Color("5fe0ff"))
+			_icon(c, "ankh", Vector2(w - 38 - r * 19.0, oy + 46), 20, Color("5fe0ff"))
+		if p.banana > 0:
+			_icon(c, "banana", Vector2(rx + n * 18.0 + 4, oy + 45), 21, Color("ffe066"))
 	else:
 		var s := 34.0
 		var at := Vector2((w - s) / 2.0, oy + 10.0)
 		_face(c, at, s, col, rim)
+		_medal(c, Vector2(7, oy + 8), rank, 20)
 		c.draw_string_outline(ui_font, Vector2(0, at.y + s + 20), state, HORIZONTAL_ALIGNMENT_CENTER, w, 20, 6, dark)
 		c.draw_string(ui_font, Vector2(0, at.y + s + 20), state, HORIZONTAL_ALIGNMENT_CENTER, w, 20, GOLD)
 		var x0 := (w - n * 13.0) / 2.0
@@ -1714,10 +1830,10 @@ func _draw_chip(k: int) -> void:
 			_icon(c, "heart" if h < p.hearts else "heart_empty", Vector2(x0 + h * 13.0, at.y + s + 22), 14, Color("e2463a") if h < p.hearts else Color("5a4636"))
 		for r in p.revives:  # respawns as small ankhs down the right edge
 			_icon(c, "ankh", Vector2(w - 26, oy + 12 + r * 15.0), 15, Color("5fe0ff"))
+		if p.banana > 0:
+			_icon(c, "banana", Vector2(6, oy + c.size.y - 36), 22, Color("ffe066"))
 	if p.skip > 0:
-		c.draw_string(ui_font, Vector2(w - 30, oy + 26), "zz", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color("9fb4ff"))
-	if p.banana > 0:
-		_icon(c, "banana", Vector2(6, oy + c.size.y - 36), 22, Color("ffe066"))
+		c.draw_string(ui_font, Vector2(w - 30, oy + 24), "zz", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color("9fb4ff"))
 	if p.wounded > 0:  # healing: red cross badge with own turns left
 		var bx := w - 34.0
 		var by := oy + c.size.y - 40.0
@@ -1801,22 +1917,46 @@ func reward(p: Dictionary, icon_id: String, text: String, c: Color) -> void:
 
 
 func _draw_track() -> void:
-	# thin race strip: a dot per runner, a grey rock for the boulder, gold cap at the gate
-	var y := track.size.y / 2.0
-	var w := track.size.x - 40.0
+	# Race bar. A framed strip from start to gate with a gold fill up to the
+	# leader and a tick every 20 slabs. Each runner is a round pin in their
+	# colour that glides along as they move; the boulder is a grey rock; the
+	# pin of whoever's turn it is stands larger and bobs.
+	var y := track.size.y / 2.0 + 6.0
+	var x0 := 16.0
+	var w := track.size.x - 62.0
 	var dark := Color("2a2118")
-	track.draw_style_box(_round(Color(0.13, 0.09, 0.06, 0.8), 8, 2, Color("c98a1e")), Rect2(0, y - 8, track.size.x, 16))
-	track.draw_rect(Rect2(track.size.x - 18, y - 11, 14, 22), GOLD)
-	var bx := clampf(float(bo) / END, 0.0, 1.0) * w + 14.0
-	track.draw_rect(Rect2(bx - 9, y - 9, 18, 18), dark)
-	track.draw_rect(Rect2(bx - 6, y - 6, 12, 12), Color("8a8478"))
+	track.draw_style_box(_round(Color(0.1, 0.07, 0.05, 0.88), 9, 3, Color("c98a1e")), Rect2(0, y - 9, track.size.x - 26, 18))
+	var lead := 0.0
 	for p in players:
-		if p.out:
-			continue
-		var x: float = float(p.pos) / END * w + 14.0
+		if not p.out:
+			lead = maxf(lead, float(pin_at.get(p.name, 0.0)))
+	if lead > 0.2:
+		track.draw_style_box(_round(Color(1.0, 0.82, 0.3, 0.55), 5), Rect2(x0 - 8, y - 4, lead / END * w + 8, 8))
+	for t in [20, 40, 60]:
+		track.draw_rect(Rect2(x0 + float(t) / END * w - 1, y - 6, 2, 12), Color(1, 0.95, 0.75, 0.4))
+	_icon(track, "trophy", Vector2(track.size.x - 40, y - 22), 40, GOLD)
+	var bx := clampf(pin_bo / END, 0.0, 1.0) * w + x0
+	track.draw_circle(Vector2(bx, y), 12, dark)
+	track.draw_circle(Vector2(bx, y), 9, Color("8a8478"))
+	track.draw_circle(Vector2(bx - 3, y - 3), 3.5, Color("b3ada1"))
+	# whoever's turn it is is drawn last, on top
+	var order: Array[Dictionary] = []
+	for p in players:
+		if not p.out and (hud_current.is_empty() or p.name != hud_current.name):
+			order.append(p)
+	for p in players:
+		if not p.out and not hud_current.is_empty() and p.name == hud_current.name:
+			order.append(p)
+	for p in order:
+		var on: bool = not hud_current.is_empty() and p.name == hud_current.name
+		var x: float = float(pin_at.get(p.name, 0.0)) / END * w + x0
 		var col: Color = p.color
-		track.draw_rect(Rect2(x - 9, y - 10, 18, 20), dark)
-		track.draw_rect(Rect2(x - 6, y - 7, 12, 14), col)
+		var r := 12.0 if on else 9.0
+		var py := y - 15.0 - (absf(sin(clock * 5.0)) * 4.0 if on else 0.0)
+		track.draw_colored_polygon(PackedVector2Array([Vector2(x - r * 0.7, py + r * 0.5), Vector2(x + r * 0.7, py + r * 0.5), Vector2(x, y + 1)]), dark)  # pointer down to the bar
+		track.draw_circle(Vector2(x, py), r + 3.0, Color("fff8e1") if not p.bot else dark)
+		track.draw_circle(Vector2(x, py), r, col)
+		track.draw_circle(Vector2(x - r * 0.3, py - r * 0.3), r * 0.3, col.lightened(0.5))
 
 
 func _draw_die() -> void:
@@ -2354,7 +2494,7 @@ func banana_rescue(p: Dictionary) -> void:
 	say("A gorilla swung in and carried %s to safety" % obj(p))
 	announce("BANANA!", Color("ffe066"))
 	slow_to = 0.6  # slowed, but the camera stays wide: a close-up would be all gorilla
-	sfx.play("monkey", 2.0, 0.55)  # pitched down: a big ape
+	sfx.play("gorilla", 2.0)
 	shake(0.3)
 	root.scale = Vector3.ONE
 	root.visible = true
@@ -2414,7 +2554,7 @@ func banana_rescue(p: Dictionary) -> void:
 	var fruit := box(mk, Vector3(0.08, 0.24, 0.08), Vector3(0.26, 0.92, -0.24), Color("ffe066"))
 	fruit.rotation.z = 0.5
 	mk.eat = true
-	sfx.play("monkey", -4.0, 0.6)
+	sfx.play("gorilla", -6.0, 1.1)
 	refresh_ui()
 	await wait(1.1)
 	mk.eat = false
@@ -3433,7 +3573,7 @@ func menu(page: String) -> void:
 		"help":
 			title(v, "HOW TO PLAY", 50, GOLD)
 			title(v, "Roll the die. First to the temple gate wins. Stay ahead of the boulder.", 22, cream)
-			var rules := [["s_rope", "ROPE", "Swing far ahead"], ["s_snake", "COBRA", "Thrown far back"], ["s_tiger", "TIGER", "Lose a life, dragged back 4"], ["s_spike", "SPIKES", "Tap in time to jump, or lose a life"], ["s_crumble", "CRACKED SLAB", "You fall and lose a life"], ["s_mystery", "MYSTERY", "An animal or a treasure chest"], ["heart", "3 LIVES", "Lose them all: use a respawn"], ["heart_empty", "WOUNDED", "After any hit: weaker in fights for 2 turns"], ["ankh", "2 RESPAWNS", "None left: you are out"], ["banana", "BANANA (RARE)", "A gorilla carries you clear of a fatal hit"]]
+			var rules := [["s_rope", "ROPE", "Swing far ahead"], ["s_snake", "COBRA", "Thrown far back"], ["s_tiger", "TIGER", "Eyes in the bush: lose a life, flee back 4"], ["s_spike", "SPIKES", "Tap in time to jump, or lose a life"], ["s_crumble", "CRACKED SLAB", "You fall and lose a life"], ["s_mystery", "MYSTERY", "An animal or a treasure chest"], ["heart", "3 LIVES", "Lose them all: use a respawn"], ["heart_empty", "WOUNDED", "After any hit: weaker in fights for 2 turns"], ["ankh", "2 RESPAWNS", "None left: you are out"], ["banana", "BANANA (RARE)", "A gorilla carries you clear of a fatal hit"]]
 			for g in rules:
 				var line := HBoxContainer.new()
 				line.add_theme_constant_override("separation", 14)
@@ -3734,8 +3874,41 @@ func _process(delta: float) -> void:
 					bd.scale = Vector3.ONE * 0.05
 					bd.create_tween().tween_property(bd, "scale", Vector3.ONE, 0.3).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 				if not in_lobby and not in_cine:
-					sfx.play("coin", -16.0, 0.7)
+					if rv.kind == "tiger":
+						sfx.play("growl", -7.0)  # something is in that bush
+					else:
+						sfx.play("coin", -16.0, 0.7)
 				break
+	# race-bar pins glide towards where their runners are
+	var gliding := false
+	for p in players:
+		var cur: float = pin_at.get(p.name, float(p.pos))
+		var nxt := lerpf(cur, float(p.pos), minf(1.0, delta * 7.0))
+		if absf(nxt - float(p.pos)) < 0.01:
+			nxt = float(p.pos)
+		gliding = gliding or nxt != cur
+		pin_at[p.name] = nxt
+	var nbo := lerpf(pin_bo, float(bo), minf(1.0, delta * 5.0))
+	gliding = gliding or absf(nbo - pin_bo) > 0.002
+	pin_bo = nbo
+	if gliding or not hud_current.is_empty():  # the active pin bobs
+		track.queue_redraw()
+	# Keep the path uncluttered: badges show only for the next few slabs ahead of
+	# whoever is moving, and only the nearest one carries its caption.
+	if not focus_p.is_empty():
+		var fpos: int = focus_p.pos
+		var nearest := 999
+		for i in reveals:
+			if reveals[i].shown and i > fpos and i < nearest:
+				nearest = i
+		for i in reveals:
+			var rv: Dictionary = reveals[i]
+			if not rv.shown:
+				continue
+			var ahead: bool = i > fpos and i <= fpos + 3
+			if rv.board:
+				rv.board.visible = ahead
+			rv.cap.visible = ahead and i == nearest
 	update_sky(delta)
 	for r in rescues:  # the vine a rescuing monkey hangs from
 		if is_instance_valid(r.mk):

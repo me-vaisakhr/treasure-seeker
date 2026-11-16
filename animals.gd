@@ -197,9 +197,10 @@ static func _monkey(m, gorilla: bool) -> Node3D:
 	# back, massive shoulders and arms, a crest and brow ridge, and no tail.
 	var n: Node3D = Rig.new()
 	n.kind = "monkey"
-	var brown := Color("2e2a2c") if gorilla else Color("7a5230")
-	var dark := brown.darkened(0.15)
-	var tan := Color("4a4448") if gorilla else Color("d9b48a")
+	n.heavy = gorilla
+	var brown := Color("45414b") if gorilla else Color("8a5a32")
+	var dark := brown.darkened(0.18)
+	var tan := Color("77717c") if gorilla else Color("e2bd92")  # face, hands, feet
 	var chest := _pivot(n, Vector3(0, 0.62, 0))
 	n.chest = chest
 	m.box(chest, Vector3(0.42, 0.5, 0.32), Vector3.ZERO, brown)
@@ -209,9 +210,12 @@ static func _monkey(m, gorilla: bool) -> Node3D:
 	m.box(head, Vector3(0.4, 0.36, 0.36), Vector3(0, 0.12, 0), brown)
 	m.box(head, Vector3(0.28, 0.26, 0.06), Vector3(0, 0.1, -0.19), tan)
 	m.box(head, Vector3(0.16, 0.1, 0.08), Vector3(0, 0.03, -0.23), tan.darkened(0.12))  # muzzle
+	m.box(head, Vector3(0.08, 0.03, 0.02), Vector3(0, -0.01, -0.275), Color("1a1410"))  # mouth
 	for x in [-0.24, 0.24]:
-		m.box(head, Vector3(0.1, 0.16, 0.06), Vector3(x, 0.14, 0.0), tan)       # ear
-		m.box(head, Vector3(0.05, 0.06, 0.03), Vector3(x * 0.3, 0.15, -0.23), Color("1a1410"))
+		m.box(head, Vector3(0.1, 0.2, 0.08) if not gorilla else Vector3(0.07, 0.12, 0.06), Vector3(x, 0.14, 0.0), tan)  # ear
+		m.box(head, Vector3(0.09, 0.09, 0.03), Vector3(x * 0.32, 0.16, -0.225), Color("fff8e1"))  # eye white
+		m.box(head, Vector3(0.05, 0.06, 0.03), Vector3(x * 0.3, 0.155, -0.24), Color("1a1410"))
+		m.box(head, Vector3(0.025, 0.03, 0.02), Vector3(x * 0.12, 0.05, -0.275), Color("1a1410"))  # nostril
 	for side in [-1, 1]:
 		var sh := _pivot(chest, Vector3(side * 0.26, 0.18, 0))
 		m.box(sh, Vector3(0.12, 0.32, 0.12), Vector3(0, -0.15, 0), dark)
@@ -234,9 +238,9 @@ static func _monkey(m, gorilla: bool) -> Node3D:
 	if gorilla:
 		m.box(chest, Vector3(0.6, 0.4, 0.4), Vector3(0, 0.1, 0), brown)                 # barrel chest
 		m.box(chest, Vector3(0.5, 0.36, 0.06), Vector3(0, 0.02, 0.2), Color("b9b6b2"))  # silver back
-		m.box(chest, Vector3(0.36, 0.22, 0.05), Vector3(0, 0.12, -0.2), Color("3a3538")) # chest plate
+		m.box(chest, Vector3(0.4, 0.26, 0.05), Vector3(0, 0.12, -0.2), Color("625c68")) # bare chest
 		m.box(head, Vector3(0.24, 0.14, 0.3), Vector3(0, 0.36, 0.02), brown)            # crest
-		m.box(head, Vector3(0.36, 0.07, 0.08), Vector3(0, 0.2, -0.2), dark)             # brow ridge
+		m.box(head, Vector3(0.4, 0.07, 0.1), Vector3(0, 0.235, -0.2), dark)             # heavy brow ridge
 		n.scale = Vector3.ONE * 1.8
 		return n
 	var seg := _pivot(chest, Vector3(0, -0.2, 0.17))

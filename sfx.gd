@@ -50,8 +50,9 @@ func _ready() -> void:
 	streams["thunder"] = wav(mix(gain(noise(2.4, 0.03, 1.4), 2.2), tone(2.4, 46, 30, "sine", 1.2)))
 	streams["punch"] = streams["bump"]
 	streams["growl"] = streams["roar"]
-	# files in res://sfx/ (made with sfx-lab) replace the synthesised versions
-	for id in ["roar", "growl", "snake", "trumpet", "monkey", "thunder", "punch", "crumble", "boulder"]:
+	streams["gorilla"] = streams["monkey"]
+	# recordings in res://sfx/ (see tools/import_sounds.py) replace the synthesised versions
+	for id in ["roar", "growl", "snake", "trumpet", "monkey", "gorilla", "thunder", "punch", "crumble", "boulder", "dice", "step", "coin"]:
 		var path := "res://sfx/%s.wav" % id
 		if ResourceLoader.exists(path):
 			streams[id] = load(path)
