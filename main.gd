@@ -901,7 +901,7 @@ func build_world() -> void:
 	for k in bot_count + 1:
 		var r: Dictionary = ROSTER[k]
 		var p := {"name": r.name, "color": r.color, "off": r.off, "bot": k > 0,
-			"pos": 0, "out": false, "done": false, "danger": false, "skip": 0, "hearts": 3, "coins": 0, "revives": 2, "shield": false, "wounded": 0, "banana": 0, "hit": {}}
+			"pos": 0, "out": false, "done": false, "danger": false, "skip": 0, "hearts": 3, "coins": 0, "revives": 2, "shield": false, "sprint": false, "wounded": 0, "banana": 0, "hit": {}}
 		p["a"] = make_actor(r.color, "YOU" if k == 0 else "", female if k == 0 else rng.randf() < 0.5)
 		p.a.position = spot(p, 0)
 		if not GFX[gfx].torches and k > 0:  # only your own torch casts real light at night
@@ -1678,7 +1678,7 @@ func _build_ui() -> void:
 	pow_row.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
 	pow_row.offset_left = 18
 	pow_row.offset_right = -18
-	pow_row.offset_top = -500
+	pow_row.offset_top = -464
 	pow_row.offset_bottom = -372
 	pow_row.add_theme_constant_override("separation", 10)
 	pow_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -2461,25 +2461,23 @@ func take_turn(p: Dictionary) -> void:
 		else:
 			# Your decision: after the roll you see where it leads, then tap to go,
 			# or spend coins to roll again, run 3 further, or protect yourself.
-			var sprinted := false
-			var fresh := true
-			while true:
-				var spoke := false
-				if fresh:
-					spoke = await react(p, n, steps)
-				fresh = false
-				trail = show_trail(p, steps)
-				var pick: String = await choose(p, preview(p, steps, spoke), sprinted)
-				if pick == "go":
-					break
+			# Your turn does not stop to ask. Powers are bought while you wait to
+			# roll; only a roll that lands on a trap offers a re-roll.
+			if p.sprint:
+				steps += 3
+			var spoke: bool = await react(p, n, steps)
+			trail = show_trail(p, steps)
+			var hold: float = preview(p, steps, spoke)
+			if is_bad(p, steps) and purse(p) >= COST.reroll and await offer_reroll(p):
 				trail.queue_free()
-				if pick == "reroll":
-					n = await roll(p, true)
-					steps = n + boost + (3 if sprinted else 0)
-					fresh = true
-				else:
-					sprinted = true
-					steps += 3
+				n = await roll(p, true)
+				steps = n + boost + (3 if p.sprint else 0)
+				await react(p, n, steps)
+				trail = show_trail(p, steps)
+				await wait(preview(p, steps, true))
+			else:
+				await wait(hold)
+			p.sprint = false
 		p.a.express("")
 		await move(p, steps)
 		if active(p) and p.pos > from_pos and not (kinds[p.pos] in HARMFUL):  # anyone passed on the way hears about it, and answers back
@@ -2523,64 +2521,59 @@ func pay(p: Dictionary, n: int) -> void:
 	refresh_ui()
 
 
-func choose(p: Dictionary, hold: float, sprinted: bool) -> String:
-	# Returns "go", "reroll" or "sprint". Shield and life are bought on the spot
-	# and the choice stays open. With no coins to spend it is just the usual pause.
-	if purse(p) < COST.reroll:
-		await wait(hold)
-		return "go"
+func offer_reroll(p: Dictionary) -> bool:
+	# Only when the roll lands on a trap: one button, a short timer, tap to accept the roll.
 	choosing = true
 	go_now = false
 	choice = ""
-	var asked := -1
-	var left := 6.0
-	lbl_hint.text = "TAP TO MOVE  -  OR SPEND COINS (%d)" % purse(p)
-	say("Tap to move, or spend coins first")
-	lbl_hint.visible = true
+	clear_buttons()
+	say("Bad landing. Roll again for %d coins, or tap to go" % COST.reroll)
+	add_button("REROLL  %d" % COST.reroll, Color("3f7fe0"), func() -> void: choice = "reroll", 34)
 	turn_bar.visible = true
-	while left > 0.0 and not go_now:
-		if asked != purse(p):  # (re)build the buttons for what can be afforded now
-			asked = purse(p)
-			clear_buttons()
-			lbl_hint.text = "TAP TO MOVE  -  OR SPEND COINS (%d)" % asked
-			add_button("REROLL\n%d" % COST.reroll, Color("3f7fe0"), func() -> void: choice = "reroll", 30)
-			if not sprinted and asked >= COST.sprint and p.pos + 4 < END:
-				add_button("RUN +3\n%d" % COST.sprint, Color("ee8a1c"), func() -> void: choice = "sprint", 30)
-			if not p.shield and asked >= COST.shield:
-				add_button("SHIELD\n%d" % COST.shield, Color("2f9aa8"), func() -> void: choice = "shield", 30)
-			if p.hearts < 5 and asked >= COST.life:
-				add_button("LIFE\n%d" % COST.life, Color("c0392b"), func() -> void: choice = "life", 30)
+	var left := 4.0
+	while left > 0.0 and not go_now and choice == "":
 		await frame()
 		left -= get_process_delta_time()
-		set_meter(turn_bar, left / 6.0)
-		if choice == "shield":
-			pay(p, COST.shield)
-			p.shield = true
-			popup(p.a.position, "SHIELD UP", Color("5fe0ff"))
-			burst(p.a.position + Vector3(0, 1, 0), Color("5fe0ff"), 14, 4.0)
-		elif choice == "life":
-			pay(p, COST.life)
-			p.hearts += 1
-			popup(p.a.position, "+1 LIFE", Color("7dff9b"))
-			burst(p.a.position + Vector3(0, 1, 0), Color("7dff9b"), 14, 4.0)
-		elif choice != "":
-			break
-		choice = ""
+		set_meter(turn_bar, left / 4.0)
 	choosing = false
 	clear_buttons()
-	lbl_hint.visible = false
-	lbl_hint.text = "TAP ANYWHERE TO ROLL"
 	turn_bar.visible = false
-	if choice == "reroll":
-		pay(p, COST.reroll)
-		popup(p.a.position, "REROLL!", Color("5fe0ff"))
-		return "reroll"
-	if choice == "sprint":
-		pay(p, COST.sprint)
-		popup(p.a.position, "RUN +3!", Color("ffb347"))
-		burst(p.a.position + Vector3(0, 1, 0), Color("ffb347"), 12, 4.0)
-		return "sprint"
-	return "go"
+	if choice != "reroll":
+		return false
+	pay(p, COST.reroll)
+	popup(p.a.position, "REROLL!", Color("5fe0ff"))
+	return true
+
+
+func power_buttons(p: Dictionary) -> void:
+	# small optional buttons above the die while you wait to roll
+	clear_buttons()
+	var have := purse(p)
+	if not p.sprint and have >= COST.sprint and p.pos + 4 < END:
+		add_button("RUN +3\n%d" % COST.sprint, Color("ee8a1c"), func() -> void: choice = "sprint", 24)
+	if not p.shield and have >= COST.shield:
+		add_button("SHIELD\n%d" % COST.shield, Color("2f9aa8"), func() -> void: choice = "shield", 24)
+	if p.hearts < 5 and have >= COST.life:
+		add_button("LIFE\n%d" % COST.life, Color("c0392b"), func() -> void: choice = "life", 24)
+
+
+func buy(p: Dictionary, what: String) -> void:
+	pay(p, COST[what])
+	var c := Color("5fe0ff")
+	match what:
+		"sprint":
+			p.sprint = true
+			c = Color("ffb347")
+			popup(p.a.position, "RUN +3 THIS TURN", c)
+		"shield":
+			p.shield = true
+			popup(p.a.position, "SHIELD UP", c)
+		"life":
+			p.hearts += 1
+			c = Color("7dff9b")
+			popup(p.a.position, "+1 LIFE", c)
+	burst(p.a.position + Vector3(0, 1, 0), c, 14, 4.0)
+	refresh_ui()
 
 
 func ask_move(want: String, what: String) -> bool:
@@ -2673,6 +2666,8 @@ func rival_says(about: Dictionary, key: String, chance := 1.0) -> void:
 
 
 func quip(p: Dictionary, key: String, chance := 1.0, secs := 2.8, arg: Variant = null) -> void:
+	if results.visible:  # the race is over: nothing talks over the results board
+		return
 	# A runner says something, in a speech bubble over their head. A bubble is
 	# always left up long enough to read: a new line that arrives too soon
 	# waits its turn instead of wiping the last one out.
@@ -2886,11 +2881,20 @@ func roll(p: Dictionary, quick := false) -> int:
 		pulse.tween_property(die, "scale", Vector2(1.1, 1.1), 0.35)
 		pulse.tween_property(die, "scale", Vector2.ONE, 0.35)
 		await_roll = true
+		choice = ""
+		p.sprint = false
+		power_buttons(p)
 		var left := ROLL_TIME
 		while await_roll and left > 0.0:
 			await frame()
 			left -= get_process_delta_time()
 			set_meter(turn_bar, left / ROLL_TIME)
+			if choice != "":  # a power bought while deciding: the clock starts again
+				buy(p, choice)
+				choice = ""
+				power_buttons(p)
+				left = ROLL_TIME
+		clear_buttons()
 		pulse.kill()
 		die.scale = Vector2.ONE
 		lbl_hint.visible = false
@@ -3847,10 +3851,37 @@ func mystery(p: Dictionary) -> void:
 		"chest":
 			a.position = path[i] + Vector3(0, 0, -0.75).rotated(Vector3.UP, yaws[i])
 			a.rotation.y = yaws[i] + PI
-			await wait(0.35)
+			# The chest is opened as a little scene, to build curiosity: the runner
+			# crouches to it, it rattles and peeks open a crack of gold light, each
+			# time a little more; a held breath; then the lid flies back.
 			var lid: Node3D = a.get_meta("lid")
+			say("%s found a chest. What is inside?" % subj(p))
+			root.pose = "crouch"
+			root.express("wow")
+			await wait(0.3)
+			for k in (3 if not is_bot(p) else 1):
+				sfx.play("bump", -9.0 + k * 3.0, 0.9 + k * 0.2)
+				var rattle := a.create_tween()
+				rattle.tween_property(a, "rotation:z", 0.14 + k * 0.06, 0.05)
+				rattle.tween_property(a, "rotation:z", -0.14 - k * 0.06, 0.1)
+				rattle.tween_property(a, "rotation:z", 0.0, 0.05)
+				var peek := lid.create_tween()
+				peek.tween_property(lid, "rotation:x", 0.14 + k * 0.12, 0.1)
+				peek.tween_interval(0.22)
+				peek.tween_property(lid, "rotation:x", 0.0, 0.06)
+				burst(a.position + Vector3(0, 0.7, 0), GOLD.lightened(0.4), 5 + k * 4, 2.0 + k)
+				shake(0.05 + k * 0.05)
+				await wait(0.4)
+				sfx.play("step", -4.0, 0.7)
+				await wait(0.24 - k * 0.05)
+			await wait(0.3)  # a held breath
 			lid.create_tween().tween_property(lid, "rotation:x", 1.9, 0.3).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 			sfx.play("good")
+			sfx.play("coin", -2.0)
+			shake(0.25)
+			plume(a.position + Vector3(0, 0.7, 0), GOLD.lightened(0.3), 30, 3.2, 0.9, true)  # light pours out
+			root.pose = "cheer"
+			root.express("happy", 1.5)
 			quip(p, "chest")
 			rival_says(p, "jealous", 0.45)
 			burst(a.position + Vector3(0, 0.8, 0), GOLD, 24, 5.0)
@@ -3877,6 +3908,7 @@ func mystery(p: Dictionary) -> void:
 				say("%s found a chest: +5 coins" % subj(p))
 				await reward(p, "coin", "+5 COINS", GOLD)
 				earn(p, 5)
+			root.pose = ""
 			refresh_ui()
 			await wait(0.3)
 	spot_off()
@@ -4582,7 +4614,7 @@ func menu(page: String) -> void:
 		"help":
 			title(v, "HOW TO PLAY", 50, GOLD)
 			title(v, "Roll the die. First to the temple gate wins. The boulder chases whoever is last: if it hits you, you lose a life.", 22, cream)
-			var rules := [["s_rope", "ROPE", "Swing far ahead"], ["s_snake", "COBRA", "Thrown far back"], ["s_tiger", "TIGER", "Eyes in the bush: lose a life, flee back 4"], ["s_spike", "SPIKES", "Tap or swipe in time to jump, or lose a life"], ["coin", "COINS", "After your roll: reroll, run +3, shield or a life"], ["s_crumble", "CRACKED SLAB", "You fall and lose a life"], ["s_mystery", "MYSTERY", "An animal or a treasure chest"], ["heart", "3 LIVES", "Lose them all: use a respawn"], ["heart_empty", "WOUNDED", "After any hit: weaker in fights for 2 turns"], ["ankh", "2 RESPAWNS", "None left: you are out"], ["banana", "BANANA (RARE)", "A gorilla carries you clear of a fatal hit"]]
+			var rules := [["s_rope", "ROPE", "Swing far ahead"], ["s_snake", "COBRA", "Thrown far back"], ["s_tiger", "TIGER", "Eyes in the bush: lose a life, flee back 4"], ["s_spike", "SPIKES", "Tap or swipe in time to jump, or lose a life"], ["coin", "COINS", "Before you roll: run +3, shield or a life"], ["s_crumble", "CRACKED SLAB", "You fall and lose a life"], ["s_mystery", "MYSTERY", "An animal or a treasure chest"], ["heart", "3 LIVES", "Lose them all: use a respawn"], ["heart_empty", "WOUNDED", "After any hit: weaker in fights for 2 turns"], ["ankh", "2 RESPAWNS", "None left: you are out"], ["banana", "BANANA (RARE)", "A gorilla carries you clear of a fatal hit"]]
 			for g in rules:
 				var line := HBoxContainer.new()
 				line.add_theme_constant_override("separation", 14)
@@ -4668,7 +4700,7 @@ func menu(page: String) -> void:
 				var price := menu_button(line, str(g[3]), wood, menu.bind("shop"), false, 30)
 				price.custom_minimum_size = Vector2(130, 78)
 				price.add_theme_stylebox_override("disabled", _card_plain(Color("3a342c")))
-			title(v, "Spend them in a race, on your turn, after you roll. Coins you win are kept between races.", 20, cream)
+			title(v, "Buy them in a race with the buttons above the die, before you roll. Reroll is offered when a roll lands on a trap.", 20, cream)
 			icon_button(_draw_back, menu.bind("main"), false)
 		"settings":
 			v.add_theme_constant_override("separation", 8)
@@ -4874,6 +4906,9 @@ func game_over(me: Dictionary) -> void:
 		head = "FINISHED #%d" % place
 		head_c = Color("fff3c4")
 	say("Game over")
+	bubble_q.clear()
+	bubble.visible = false
+	bubble_until = 0.0
 	wallet += me.coins  # banked for the power-up shop
 	# score: placing counts most, then what you kept; fewer rounds is better
 	var score: int = [0, 1000, 600, 350, 200, 120, 80][mini(place, 6)] + me.coins * 20 + me.hearts * 50 + me.revives * 100 + bot_count * 60 - round_no * 4
