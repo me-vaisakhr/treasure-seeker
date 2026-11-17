@@ -325,6 +325,8 @@ var track: Control
 var msg_panel: PanelContainer
 var die: Control
 var die_val := 0
+var die_bonus := 0         # slabs added to the roll (tailwind, run +3): shown on the die so the move adds up
+var swing_hold := false    # blades are held aside while a runner rolls under
 var die_color := Color.WHITE
 var lbl_msg: Label
 var jump_bar: Control
@@ -2279,10 +2281,21 @@ func _draw_die() -> void:
 		die.draw_circle(at, 17 * u, Color("2a2118"))
 		die.draw_circle(at, 13 * u, die_color.darkened(0.15))
 		die.draw_circle(at + Vector2(-4, -4) * u, 4 * u, die_color.lightened(0.5))
+	if die_bonus > 0:  # "+2" badge on the corner and the total underneath: the move is die + bonus
+		var s := r.size.x / 170.0
+		var at_b := Vector2(r.size.x - 6 * s, 10 * s)
+		die.draw_circle(at_b, 34 * s, Color("2a2118"))
+		die.draw_circle(at_b, 29 * s, Color("5fe0ff"))
+		die.draw_string(ui_font, at_b + Vector2(-34, 13) * s, "+%d" % die_bonus, HORIZONTAL_ALIGNMENT_CENTER, 68 * s, int(34 * s), Color("2a2118"))
+		var total := "MOVE %d" % (die_val + die_bonus)
+		die.draw_string_outline(ui_font, Vector2(-40 * s, r.size.y + 30 * s), total, HORIZONTAL_ALIGNMENT_CENTER, r.size.x + 80 * s, int(30 * s), 8, Color("2a2118"))
+		die.draw_string(ui_font, Vector2(-40 * s, r.size.y + 30 * s), total, HORIZONTAL_ALIGNMENT_CENTER, r.size.x + 80 * s, int(30 * s), Color("5fe0ff"))
 
 
 func set_die(v: int, pop := false) -> void:
 	die_val = v
+	if v == 0:
+		die_bonus = 0
 	die.rotation = 0.0 if pop or v == 0 else rng.randf_range(-0.25, 0.25)
 	if pop:
 		die.scale = Vector2(1.45, 1.45)
@@ -2474,6 +2487,8 @@ func take_turn(p: Dictionary) -> void:
 			sfx.play("good", -8.0, 1.3)
 			quip(p, "tailwind", 0.6)
 		var steps := n + boost
+		die_bonus = boost
+		die.queue_redraw()
 		var from_pos: int = p.pos
 		var trail: Node3D
 		if is_bot(p):
@@ -2482,6 +2497,8 @@ func take_turn(p: Dictionary) -> void:
 				popup(p.a.position, "REROLL!", Color("5fe0ff"))
 				n = await roll(p, true)
 				steps = n + boost
+				die_bonus = boost
+				die.queue_redraw()
 			trail = show_trail(p, steps)
 			await wait(minf(preview(p, steps), 0.8))
 		else:
@@ -2491,6 +2508,10 @@ func take_turn(p: Dictionary) -> void:
 			# roll; only a roll that lands on a trap offers a re-roll.
 			if p.sprint:
 				steps += 3
+			die_bonus = steps - n
+			die.queue_redraw()
+			if die_bonus > 0:
+				say("You move %d + %d = %d slabs" % [n, die_bonus, steps])
 			var spoke: bool = await react(p, n, steps)
 			trail = show_trail(p, steps)
 			var hold: float = preview(p, steps, spoke)
@@ -2502,6 +2523,8 @@ func take_turn(p: Dictionary) -> void:
 				trail.queue_free()
 				n = await roll(p, true)
 				steps = n + boost + (3 if p.sprint else 0)
+				die_bonus = steps - n
+				die.queue_redraw()
 				await react(p, n, steps)
 				trail = show_trail(p, steps)
 				await wait(preview(p, steps, true))
@@ -2642,11 +2665,13 @@ func _draw_prompt() -> void:
 			for a in arrow:
 				pts.append((a * (size * (1.12 if pass_k == 0 else 1.0))).rotated(ang) + mid + push)
 			c.draw_colored_polygon(pts, dark if pass_k == 0 else gold)
-	if turns.is_empty():  # tap: a pulsing ring
-		c.draw_circle(mid, 58 + bob * 0.5, dark)
-		c.draw_circle(mid, 52 + bob * 0.5, gold)
-		c.draw_circle(mid, 30, dark)
-	var words: String = {"up": "SWIPE UP", "down": "SWIPE DOWN", "side": "SWIPE SIDEWAYS", "tap": "TAP!"}[prompt_dir]
+	if turns.is_empty():  # tap: a round button that presses in and out
+		var press := absf(sin(clock * 9.0))
+		c.draw_circle(mid + Vector2(0, 10), 66, dark)
+		c.draw_circle(mid + Vector2(0, 8.0 * press), 60, gold.darkened(0.25))
+		c.draw_circle(mid + Vector2(0, 8.0 * press - 8.0), 60, gold)
+		c.draw_string(ui_font, Vector2(0, mid.y + 8.0 * press + 8.0), "TAP", HORIZONTAL_ALIGNMENT_CENTER, c.size.x, 44, dark)
+	var words: String = {"up": "SWIPE UP", "down": "SWIPE DOWN", "side": "SWIPE SIDEWAYS", "tap": "NOW!"}[prompt_dir]
 	for y in [[212.0, prompt_text, 30, Color("fff8e1")], [250.0, words, 34, gold]]:
 		c.draw_string_outline(ui_font, Vector2(0, y[0]), y[1], HORIZONTAL_ALIGNMENT_CENTER, c.size.x, y[2], 8, dark)
 		c.draw_string(ui_font, Vector2(0, y[0]), y[1], HORIZONTAL_ALIGNMENT_CENTER, c.size.x, y[2], y[3])
@@ -2878,6 +2903,7 @@ func show_trail(p: Dictionary, n: int) -> Node3D:
 func roll(p: Dictionary, quick := false) -> int:
 	# returns 1-6, or 0 when the player let the timer run out
 	die_color = p.color
+	die_bonus = 0
 	place_die(not is_bot(p))
 	if quick:
 		pass
@@ -2908,8 +2934,7 @@ func roll(p: Dictionary, quick := false) -> int:
 					power_buttons(p)
 				else:
 					clear_buttons()
-			if not shown:  # the clock waits while you look at the options
-				left -= get_process_delta_time()
+			left -= get_process_delta_time()  # the clock keeps running: choose within the limit
 			set_meter(turn_bar, left / ROLL_TIME)
 			if choice != "":
 				buy(p, choice)
@@ -3062,7 +3087,7 @@ func stride(p: Dictionary, nxt: int) -> bool:
 		say("%s tripped. The move ends here" % subj(p))
 		await wait(0.5)
 		return false
-	var label: String = {"vault": "VAULT!", "flip": "FRONT FLIP!", "slide": "SLIDE!", "spin": "DODGE!"}[style]
+	var label: String = {"vault": "VAULT!", "flip": "FRONT FLIP!", "slide": "SLIDE!", "spin": "ROLL UNDER!"}[style]
 	if mine:
 		spotlight(p, 0.5, 3.0)
 		zoom_to = 0.4  # only a little closer: the obstacle has to stay in the picture
@@ -3070,16 +3095,18 @@ func stride(p: Dictionary, nxt: int) -> bool:
 		await wait(0.15)
 	else:
 		popup(root.position, label, Color("ffe066"))
-	root.pose = {"vault": "vault", "flip": "tuck", "slide": "slide", "spin": "guard"}[style]
+	root.pose = {"vault": "vault", "flip": "tuck", "slide": "slide", "spin": "tuck"}[style]
+	swing_hold = style == "spin"  # the blade swings clear as they go under
 	sfx.play("whoosh", -3.0, 0.8)
 	var col: Color = p.color
 	var dur: float = {"vault": 0.62, "flip": 0.8, "slide": 0.62, "spin": 0.6}[style]
 	var tw := create_tween()
 	tw.tween_method(func(t: float) -> void:
-		_parkour(t, root, edge, to, style, yaw)
+		_parkour(t, root, edge, to, "roll" if style == "spin" else style, yaw)
 		if Engine.get_frames_drawn() % 2 == 0:  # a streak of the runner's colour marks the path taken
 			burst(root.position + Vector3(0, 0.9, 0), col.lightened(0.3), 2, 0.6), 0.0, 1.0, dur)
 	await tw.finished
+	swing_hold = false
 	root.pose = ""
 	root.rotation = Vector3(0, yaw, 0)
 	root.position = to
@@ -4158,17 +4185,24 @@ func ask_fight(q: Dictionary, odds: float) -> bool:
 	choice = ""
 	clear_buttons()
 	say("%s is on this slab" % q.name.capitalize())
-	show_card("heart", "FIGHT FOR THE SLAB?", "Winner stays. Loser is knocked back and loses a life", Color("ff6b5e"), 6.0)
+	show_card("heart", "FIGHT FOR THE SLAB?", "Winner stays. Loser is knocked back and loses a life", Color("ff6b5e"), 5.0)
 	add_button("FIGHT\n%d%% TO WIN" % roundi(odds * 100.0), Color("c0392b"), func() -> void: choice = "fight", 32)
 	add_button("PASS\nSHARE IT", Color("3fae5a"), func() -> void: choice = "pass", 32)
 	turn_bar.visible = true
-	var left := 6.0
+	lbl_hint.visible = true
+	var left := 5.0
 	while left > 0.0 and choice == "":
 		await frame()
 		left -= get_process_delta_time()
-		set_meter(turn_bar, left / 6.0)
+		set_meter(turn_bar, left / 5.0)
+		lbl_hint.text = "CHOOSE IN %d" % ceili(left)  # the limit, counted down
 	turn_bar.visible = false
+	lbl_hint.visible = false
+	lbl_hint.text = "TAP ANYWHERE TO ROLL"
 	clear_buttons()
+	if choice == "":  # no answer in time: the slab is shared
+		announce("TIME UP", Color("ff6b5e"))
+		sfx.play("bad", -6.0)
 	if card_tw:
 		card_tw.kill()
 	card.visible = false
@@ -5053,7 +5087,7 @@ func _process(delta: float) -> void:
 		prompt.queue_redraw()
 	for sw in swingers:
 		if is_instance_valid(sw):
-			sw.rotation.z = sin(clock * 3.2) * 0.95
+			sw.rotation.z = lerpf(sw.rotation.z, 1.25 if swing_hold else sin(clock * 3.2) * 0.95, minf(1.0, delta * 14.0))
 	for g in pickups.values():
 		g.rotation.y += delta * 3.0
 	for i in reveals:  # signs pop in as runners approach
