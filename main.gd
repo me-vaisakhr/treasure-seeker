@@ -2329,7 +2329,7 @@ func set_die(v: int, pop := false) -> void:
 	else:  # the cube at rest, showing v
 		if die_view == null:
 			_build_die3d()
-		die_pip.albedo_color = die_color.darkened(0.15) if die_color != Color.WHITE else Color("c0392b")
+		die_pip.albedo_texture = _pip_tex(die_color if die_color != Color.WHITE else Color("c0392b"))
 		die_cube.basis = die_face(v)
 		die_cube.position = Vector3.ZERO
 		die_view.render_target_update_mode = SubViewport.UPDATE_ONCE
@@ -3000,7 +3000,7 @@ func roll(p: Dictionary, quick := false) -> int:
 	var n := rng.randi_range(1, 6)
 	sfx.play("dice")
 	await roll3d(n, 0.6 if is_bot(p) else 1.4, not is_bot(p))  # the die is thrown and tumbles to rest: a moment of suspense
-	set_die(n, true)
+	set_die(n)  # no extra pop: it has just landed
 	await wait(0.25)
 	return n
 
@@ -3033,28 +3033,29 @@ func _build_die3d() -> void:
 	die_view.add_child(we)
 	die_cube = Node3D.new()
 	die_view.add_child(die_cube)
-	var body := MeshInstance3D.new()
-	var bm := BoxMesh.new()
-	bm.size = Vector3.ONE * 1.5
-	body.mesh = bm
-	var white := StandardMaterial3D.new()
-	white.albedo_color = Color("fbf6e6")
-	body.material_override = white
-	die_cube.add_child(body)
-	var rim := MeshInstance3D.new()  # dark outline: a slightly larger shell seen from inside
-	var rm := BoxMesh.new()
-	rm.size = Vector3.ONE * 1.62
-	rim.mesh = rm
-	var ink := StandardMaterial3D.new()
-	ink.albedo_color = Color("2a2118")
-	ink.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	ink.cull_mode = BaseMaterial3D.CULL_FRONT
-	rim.material_override = ink
-	die_cube.add_child(rim)
+	# Each face wears the painted die face (ivory, gold inlay, dark rounded
+	# rim), so the cube at rest is the same die as the rest of the HUD art.
+	var core := MeshInstance3D.new()  # fills the gaps at the rounded corners
+	var cm := BoxMesh.new()
+	cm.size = Vector3.ONE * 1.42
+	core.mesh = cm
+	var dark := StandardMaterial3D.new()
+	dark.albedo_color = Color("3a2410")
+	core.material_override = dark
+	die_cube.add_child(core)
+	var skin := StandardMaterial3D.new()
+	skin.albedo_texture = ui_tex("die")
+	skin.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	skin.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+	if skin.albedo_texture == null:
+		skin.albedo_color = Color("fbf0d0")
 	die_pip = StandardMaterial3D.new()
-	var ball := SphereMesh.new()
-	ball.radius = 0.15
-	ball.height = 0.3
+	die_pip.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	die_pip.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+	var face_mesh := QuadMesh.new()
+	face_mesh.size = Vector2(1.5, 1.5)
+	var pip_mesh := QuadMesh.new()
+	pip_mesh.size = Vector2(0.36, 0.36)
 	# opposite faces add up to seven
 	var faces := {1: Vector3.UP, 6: Vector3.DOWN, 2: Vector3.BACK, 5: Vector3.FORWARD, 3: Vector3.RIGHT, 4: Vector3.LEFT}
 	var pips := {1: [4], 2: [0, 8], 3: [0, 4, 8], 4: [0, 2, 6, 8], 5: [0, 2, 4, 6, 8], 6: [0, 2, 3, 5, 6, 8]}
@@ -3062,11 +3063,17 @@ func _build_die3d() -> void:
 		var nrm: Vector3 = faces[v]
 		var t1 := Vector3(nrm.y, nrm.z, nrm.x)
 		var t2 := nrm.cross(t1)
+		var out := Basis(t1, t2, nrm)  # a quad turned to face outward
+		var face := MeshInstance3D.new()
+		face.mesh = face_mesh
+		face.material_override = skin
+		face.transform = Transform3D(out, nrm * 0.75)
+		die_cube.add_child(face)
 		for k in pips[v]:
 			var dot := MeshInstance3D.new()
-			dot.mesh = ball
+			dot.mesh = pip_mesh
 			dot.material_override = die_pip
-			dot.position = nrm * 0.74 + t1 * ((k % 3) - 1) * 0.42 + t2 * ((k / 3) - 1) * 0.42
+			dot.transform = Transform3D(out, nrm * 0.756 + t1 * ((k % 3) - 1) * 0.345 + t2 * ((k / 3) - 1) * 0.345)
 			die_cube.add_child(dot)
 	die_rect = TextureRect.new()
 	die_rect.texture = die_view.get_texture()
@@ -3079,13 +3086,30 @@ func _build_die3d() -> void:
 	_fit_die3d()
 
 
+func _pip_tex(col: Color) -> Texture2D:
+	# one pip in the HUD's pixel style: dark ring, the runner's colour, a highlight
+	var key := "pip" + col.to_html()
+	if not tex_cache.has(key):
+		var im := Image.create(16, 16, false, Image.FORMAT_RGBA8)
+		for y in 16:
+			for x in 16:
+				var d := Vector2(x - 7.5, y - 7.5).length()
+				if d <= 7.6:
+					var c := Color("2a2118") if d > 5.6 else col.darkened(0.15)
+					if Vector2(x - 5.0, y - 5.0).length() < 1.6:
+						c = col.lightened(0.5)
+					im.set_pixel(x, y, c)
+		tex_cache[key] = ImageTexture.create_from_image(im)
+	return tex_cache[key]
+
+
 func roll3d(n: int, secs: float, show := false) -> void:
 	# The throw. On your own turn it is a small show: the die is shaken, tossed
 	# up to the middle of the screen (clear of the HUD text), tumbles and
 	# bounces with a clack each time, and drops back into its place.
 	if die_view == null:
 		_build_die3d()
-	die_pip.albedo_color = die_color.darkened(0.15)
+	die_pip.albedo_texture = _pip_tex(die_color)
 	var final := die_face(n)
 	var spin := Vector3(rng.randf_range(2.0, 3.0), rng.randf_range(1.0, 2.0), rng.randf_range(2.0, 3.0)) * TAU * (1.6 if show else 1.0)
 	var home := die.position
@@ -3101,16 +3125,17 @@ func roll3d(n: int, secs: float, show := false) -> void:
 			await never
 	var clacks := create_tween()  # one for each time it comes down
 	for k in 3:
-		clacks.tween_interval(secs / 6.0 if k == 0 else secs / 3.0)
+		clacks.tween_interval(secs / 3.0)
 		clacks.tween_callback(sfx.play.bind("step", -3.0 - k * 2.0, 1.5 + k * 0.15))
 	var tw := create_tween()
 	tw.tween_method(func(t: float) -> void:
 		var e := 1.0 - pow(1.0 - t, 3.0)
 		die_cube.basis = Basis.from_euler(spin * (1.0 - e)) * final
-		var hop_k := absf(cos(t * PI * 3.0)) * pow(1.0 - t, 1.5)  # each bounce lower than the last
+		# three arcs, each lower than the last, the third ending exactly as it comes to rest
+		var hop_k := absf(sin(t * PI * 3.0)) * pow(1.0 - t, 1.2)
 		die.scale = Vector2.ONE * (1.0 + hop_k * (0.7 if show else 0.35))
-		if show:
-			die.position = home + Vector2(0, -250.0 * sin(PI * minf(t / 0.85, 1.0))), 0.0, 1.0, secs)
+		if show:  # up to the middle of the screen and back down into its place, in one sweep
+			die.position = home + Vector2(0, -250.0 * sin(PI * t)), 0.0, 1.0, secs)
 	await tw.finished
 	if dead or not is_inside_tree():
 		await never
