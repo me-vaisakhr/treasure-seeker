@@ -2313,7 +2313,7 @@ func die_face(n: int) -> Basis:
 func _fit_die3d() -> void:
 	# the cube's picture is larger than the die's box, so the throw has room to bounce
 	if die_rect:
-		var m: float = (die.offset_right - die.offset_left) * 0.9
+		var m: float = (die.offset_right - die.offset_left) * 0.5
 		die_rect.offset_left = -m
 		die_rect.offset_top = -m
 		die_rect.offset_right = m
@@ -2334,9 +2334,9 @@ func set_die(v: int, pop := false) -> void:
 		die_cube.position = Vector3.ZERO
 		die_view.render_target_update_mode = SubViewport.UPDATE_ONCE
 		die_rect.visible = true
-	die.rotation = 0.0 if pop or v == 0 else rng.randf_range(-0.25, 0.25)
+	die.rotation = 0.0
 	if pop:
-		die.scale = Vector2(1.45, 1.45)
+		die.scale = Vector2(1.25, 1.25)
 		create_tween().tween_property(die, "scale", Vector2.ONE, 0.3).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 	die.queue_redraw()
 
@@ -2999,7 +2999,7 @@ func roll(p: Dictionary, quick := false) -> int:
 			return 0
 	var n := rng.randi_range(1, 6)
 	sfx.play("dice")
-	await roll3d(n, 0.6 if is_bot(p) else 1.15)  # the die is thrown and tumbles to rest: a moment of suspense
+	await roll3d(n, 0.6 if is_bot(p) else 1.4, not is_bot(p))  # the die is thrown and tumbles to rest: a moment of suspense
 	set_die(n, true)
 	await wait(0.25)
 	return n
@@ -3015,12 +3015,14 @@ func _build_die3d() -> void:
 	die_view.render_target_update_mode = SubViewport.UPDATE_DISABLED
 	add_child(die_view)
 	var c3 := Camera3D.new()
-	c3.fov = 36.0
+	c3.projection = Camera3D.PROJECTION_ORTHOGONAL  # no perspective: at rest the top face is a clean square
+	c3.size = 3.4
 	die_view.add_child(c3)
-	c3.position = Vector3(0, 6.0, 1.5)  # nearly straight down: the top face is the number
-	c3.look_at(Vector3(0, 0.4, 0))
+	c3.position = Vector3(0, 6.0, 0)
+	c3.rotation_degrees = Vector3(-90, 0, 0)  # straight down: the top face is the number
 	var lamp := DirectionalLight3D.new()
 	lamp.rotation_degrees = Vector3(-58, 28, 0)
+	lamp.light_energy = 0.6
 	die_view.add_child(lamp)
 	var we := WorldEnvironment.new()
 	var e := Environment.new()
@@ -3077,25 +3079,43 @@ func _build_die3d() -> void:
 	_fit_die3d()
 
 
-func roll3d(n: int, secs: float) -> void:
+func roll3d(n: int, secs: float, show := false) -> void:
+	# The throw. On your own turn it is a small show: the die is shaken, tossed
+	# up to the middle of the screen (clear of the HUD text), tumbles and
+	# bounces with a clack each time, and drops back into its place.
 	if die_view == null:
 		_build_die3d()
 	die_pip.albedo_color = die_color.darkened(0.15)
 	var final := die_face(n)
-	var spin := Vector3(rng.randf_range(2.0, 3.0), rng.randf_range(1.0, 2.0), rng.randf_range(2.0, 3.0)) * TAU
-	var from_x := rng.randf_range(-1.4, 1.4)
-	die.rotation = 0.0
+	var spin := Vector3(rng.randf_range(2.0, 3.0), rng.randf_range(1.0, 2.0), rng.randf_range(2.0, 3.0)) * TAU * (1.6 if show else 1.0)
+	var home := die.position
 	die_view.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	die_rect.visible = true
+	if show:  # shaken in the hand first
+		var sh := die.create_tween()
+		for k in 5:
+			sh.tween_property(die, "rotation", 0.24 if k % 2 == 0 else -0.24, 0.06)
+		sh.tween_property(die, "rotation", 0.0, 0.05)
+		await sh.finished
+		if dead or not is_inside_tree():
+			await never
+	var clacks := create_tween()  # one for each time it comes down
+	for k in 3:
+		clacks.tween_interval(secs / 6.0 if k == 0 else secs / 3.0)
+		clacks.tween_callback(sfx.play.bind("step", -3.0 - k * 2.0, 1.5 + k * 0.15))
 	var tw := create_tween()
 	tw.tween_method(func(t: float) -> void:
 		var e := 1.0 - pow(1.0 - t, 3.0)
 		die_cube.basis = Basis.from_euler(spin * (1.0 - e)) * final
-		die_cube.position = Vector3(from_x * (1.0 - e), absf(cos(t * PI * 2.5)) * (1.0 - t) * 2.4, 0), 0.0, 1.0, secs)
+		var hop_k := absf(cos(t * PI * 3.0)) * pow(1.0 - t, 1.5)  # each bounce lower than the last
+		die.scale = Vector2.ONE * (1.0 + hop_k * (0.7 if show else 0.35))
+		if show:
+			die.position = home + Vector2(0, -250.0 * sin(PI * minf(t / 0.85, 1.0))), 0.0, 1.0, secs)
 	await tw.finished
 	if dead or not is_inside_tree():
 		await never
-	sfx.play("step", -3.0, 1.4)
+	die.position = home
+	die.scale = Vector2.ONE
 	die_view.render_target_update_mode = SubViewport.UPDATE_ONCE  # it stays where it landed: this is the die
 
 
