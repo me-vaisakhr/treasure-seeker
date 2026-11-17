@@ -40,7 +40,8 @@ The web build is made with
     godot --headless --path . --export-release Web build/web/index.html
 
 and published from the `gh-pages` branch. It is built without threads, which
-GitHub Pages requires. On a wide window the game keeps a portrait frame.
+GitHub Pages requires. On a wide window the world fills the view and the
+menus and HUD keep to a centred portrait column.
 
 ## Android build
 

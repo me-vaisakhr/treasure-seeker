@@ -1099,13 +1099,6 @@ func apply_safe_area() -> void:
 	# Fit the UI to the real screen: match the 2D viewport to the window's
 	# shape, and inset the HUD by the device's unsafe edges (notch, punch-hole
 	# camera, rounded corners, home-gesture bar). Runs again if the window changes.
-	if OS.has_feature("web"):
-		# In a wide browser window the game keeps its portrait frame (bars at
-		# the sides) instead of stretching; on a phone it still fills the screen.
-		var ws := DisplayServer.window_get_size()
-		var want := Window.CONTENT_SCALE_ASPECT_KEEP if ws.x > ws.y * 0.8 else Window.CONTENT_SCALE_ASPECT_EXPAND
-		if get_tree().root.content_scale_aspect != want:
-			get_tree().root.content_scale_aspect = want
 	var vis := get_viewport().get_visible_rect().size
 	ui_layer.size_2d_override = Vector2i(vis)
 	var inset := [0.0, 0.0, 0.0, 0.0]  # left, top, right, bottom, in UI units
@@ -1118,6 +1111,13 @@ func apply_safe_area() -> void:
 	if OS.has_environment("VAULT_SAFE"):  # dev: "top,bottom" to preview a notched phone on desktop
 		var parts := OS.get_environment("VAULT_SAFE").split(",")
 		inset = [0.0, float(parts[0]), 0.0, float(parts[1]) if parts.size() > 1 else 0.0]
+	# On a wide window (desktop browser, tablet on its side) the world fills the
+	# whole view, while menus and HUD keep to a centred portrait column.
+	var column := vis.y * 0.5625
+	if vis.x > column * 1.1:
+		var side := (vis.x - column) / 2.0
+		inset[0] = maxf(inset[0], side)
+		inset[2] = maxf(inset[2], side)
 	safe.offset_left = inset[0]
 	safe.offset_top = inset[1]
 	safe.offset_right = -inset[2]
@@ -3776,8 +3776,8 @@ func menu(page: String) -> void:
 	shade_rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	shade_rect.offset_top = -400    # spills past the safe inset so the whole screen dims
 	shade_rect.offset_bottom = 400
-	shade_rect.offset_left = -200
-	shade_rect.offset_right = 200
+	shade_rect.offset_left = -3000
+	shade_rect.offset_right = 3000
 	shade_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	lobby.add_child(shade_rect)
 
@@ -4124,6 +4124,9 @@ func _process(delta: float) -> void:
 	if not world:
 		return
 	clock += delta
+	# self-heal: if the window was reshaped and the UI is still laid out for the old shape, refit it
+	if Engine.get_frames_drawn() % 20 == 0 and Vector2i(get_viewport().get_visible_rect().size) != ui_layer.size_2d_override:
+		apply_safe_area()
 	var real := delta / maxf(Engine.time_scale, 0.05)  # unscaled frame time
 	zoom_k = move_toward(zoom_k, zoom_to, real * 3.0)
 	slow_now = move_toward(slow_now, slow_to, real * 3.5)
