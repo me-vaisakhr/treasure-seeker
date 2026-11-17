@@ -52,8 +52,14 @@ func _ready() -> void:
 	streams["punch"] = streams["bump"]
 	streams["growl"] = streams["roar"]
 	streams["gorilla"] = streams["monkey"]
+	for id in ["punch2", "punch3", "kick", "ko"]:  # stand-ins until the recordings are found
+		streams[id] = streams["punch"]
+	streams["gong"] = streams["good"]
+	streams["whoosh"] = streams["jump"]
+	streams["oof"] = streams["bad"]
+	streams["bodyfall"] = streams["land"]
 	# recordings in res://sfx/ (see tools/import_sounds.py) replace the synthesised versions
-	for id in ["roar", "growl", "snake", "trumpet", "monkey", "gorilla", "thunder", "punch", "crumble", "boulder", "dice", "step", "coin"]:
+	for id in ["roar", "growl", "snake", "trumpet", "monkey", "gorilla", "thunder", "punch", "crumble", "boulder", "dice", "step", "coin", "gong", "whoosh", "punch2", "punch3", "kick", "oof", "ko", "bodyfall"]:
 		var path := "res://sfx/%s.wav" % id
 		if ResourceLoader.exists(path):
 			streams[id] = load(path)
@@ -102,6 +108,11 @@ func looped(path: String, fallback: AudioStream) -> AudioStream:
 	s.loop_mode = AudioStreamWAV.LOOP_FORWARD
 	s.loop_end = int(s.get_length() * s.mix_rate)
 	return s
+
+
+func hit() -> void:
+	# one of three punch recordings, so a flurry does not sound like a machine gun
+	play(["punch", "punch2", "punch3"][rng.randi_range(0, 2)], -1.0)
 
 
 func set_night(k: float) -> void:

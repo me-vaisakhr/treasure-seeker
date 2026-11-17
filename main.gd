@@ -3469,6 +3469,7 @@ func fight(p: Dictionary, q: Dictionary) -> void:
 	var pct := roundi(chance * 100.0)
 	say("%s %d%%  vs  %s %d%%" % ["YOU" if not p.bot else p.name, pct, "YOU" if not q.bot else q.name, 100 - pct])
 	announce("FIGHT!", Color("ff6b5e"))
+	sfx.play("gong", -2.0)
 	a.look_at(Vector3(b.position.x, a.position.y, b.position.z))
 	b.look_at(Vector3(a.position.x, b.position.y, a.position.z))
 	var homes := {a: a.position, b: b.position}
@@ -3486,10 +3487,15 @@ func fight(p: Dictionary, q: Dictionary) -> void:
 		var vic: Node3D = r[1]
 		var from := att.position
 		att.pose = r[2]
+		sfx.play("whoosh", -4.0)
 		var lunge := att.create_tween()
 		lunge.tween_property(att, "position", from.lerp(vic.position, 0.45), 0.09)
 		await lunge.finished
-		sfx.play("punch")
+		if r[2] == "kick":
+			sfx.play("kick", 1.0)
+		else:
+			sfx.hit()
+		sfx.play("oof", -5.0, rng.randf_range(0.85, 1.2))
 		shake(0.22)
 		vic.pose = "hit"
 		vic.express("pain")
@@ -3504,7 +3510,9 @@ func fight(p: Dictionary, q: Dictionary) -> void:
 		vic.pose = "guard"
 	for k in 4:  # the scuffle
 		burst(mid + Vector3(rng.randf_range(-0.4, 0.4), 0.8, rng.randf_range(-0.4, 0.4)), Color("efe6cf"), 12, 3.5)
-		sfx.play("punch", -5.0)
+		sfx.hit()
+		if k % 2 == 0:
+			sfx.play("whoosh", -8.0)
 		shake(0.15)
 		wn.pose = "punch" if k % 2 == 0 else "kick"
 		ln.pose = "hit" if k % 2 == 0 else "punch"
@@ -3516,6 +3524,8 @@ func fight(p: Dictionary, q: Dictionary) -> void:
 	burst(mid + Vector3(0, 1.2, 0), Color("ffe066"), 20, 7.0)
 	shake(0.45)
 	popup(mid, "K.O.!", Color("ff6b5e"))
+	sfx.play("ko", 3.0)
+	sfx.play("oof", 0.0, 0.7)
 	slow_to = 0.3  # the knockout plays in deep slow motion
 	await hitstop(0.12)
 	lose.pos = safe_back(lose, lose.pos - 1)
@@ -3527,6 +3537,7 @@ func fight(p: Dictionary, q: Dictionary) -> void:
 	ln.pose = ""
 	ln.rotation = Vector3(0, yaws[lose.pos], 0)
 	squash(ln)
+	sfx.play("bodyfall", 0.0)
 	stars(ln)
 	say("%s won the fight" % subj(win))
 	await wait(0.6)

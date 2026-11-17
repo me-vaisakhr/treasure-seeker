@@ -42,6 +42,14 @@ previews, then trimmed, levelled and converted to mono WAV by
 | `dice.wav` | Dice Rolling on Table | Flem0527 | https://freesound.org/s/629982/ |
 | `step.wav` | FX_005_footstep_stone_l.wav | d00121058 | https://freesound.org/s/390764/ |
 | `coin.wav` | Retro, Coin 01.wav | LilMati | https://freesound.org/s/402067/ |
+| `gong.wav` | gongSahw_00.wav | tec_studio | https://freesound.org/s/362347/ |
+| `whoosh.wav` | Swing Woosh | Jofae | https://freesound.org/s/389590/ |
+| `punch2.wav` | Punch 2 - Heavy.ogg | steveuk87 | https://freesound.org/s/490769/ |
+| `punch3.wav` | Punching-005.wav | kretopi | https://freesound.org/s/406464/ |
+| `kick.wav` | kick with some body.wav | Saltbearer | https://freesound.org/s/486746/ |
+| `oof.wav` | Oof (original) | unfa | https://freesound.org/s/719053/ |
+| `ko.wav` | Punch #2.mp3 | lewisisminted | https://freesound.org/s/162369/ |
+| `bodyfall.wav` | BODY FALL - V HVY - DIRT | leonelmail | https://freesound.org/s/504626/ |
 | `rain.wav` | forest heavy rain loop.wav | Victormaa | https://freesound.org/s/671409/ |
 | `amb_day.wav` | Jungle ambience. Nagarhole Wildlife Sanctuary..wav | seventhsamurai | https://freesound.org/s/644886/ |
 | `amb_night.wav` | Frogs croaking & crickets at night in jungle swamp Africa | mycompasstv | https://freesound.org/s/462889/ |
