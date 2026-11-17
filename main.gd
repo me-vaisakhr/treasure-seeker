@@ -86,6 +86,12 @@ const LINES := {
 }
 const COST := {"reroll": 3, "sprint": 5, "shield": 5, "life": 10}  # coin prices of the turn powers
 const PRIZES := [[30, 3], [15, 1], [8, 0]]  # coins and diamonds for 1st, 2nd, 3rd; later finishers get 3 coins
+# what diamonds buy. Starters are used up by your next race; upgrades are for good; outfits recolour your runner.
+const STARTERS := [["banana", "banana", "BANANA", "A gorilla saves you once", 3], ["respawn", "ankh", "RESPAWN", "One extra comeback", 2], ["heart", "heart", "4TH HEART", "Start with one more life", 2], ["shield", "shield", "SHIELD", "Blocks the first hit", 1]]
+const UPGRADES := [["heart", "heart", "TOUGH", "Always start with 4 hearts", 15], ["respawn", "ankh", "SURVIVOR", "Always start with 3 respawns", 20], ["discount", "coin", "BARGAIN", "Every BOOST costs less", 10]]
+const FITS := {"red": ["RED", Color("e2463a")], "ember": ["EMBER", Color("ff7a1a")], "jade": ["JADE", Color("16b8a6")], "ivory": ["IVORY", Color("efe6d0")], "shadow": ["SHADOW", Color("4a4f5c")]}
+const FIT_PRICE := 5
+const GEM_COINS := 10  # coins for one diamond
 const HEAL_TURNS := 2     # own turns a wound takes to heal; wounded runners fight worse
 const ROLL_TIME := 8.0   # seconds a player has to roll before the turn is lost
 const PIXEL := 2          # 3D is rendered at 1/PIXEL resolution for the pixel-art look
@@ -329,9 +335,14 @@ var die_val := 0
 var die_view: SubViewport  # the 3D die: its own little scene, shown over the flat die while it tumbles
 var die_cube: Node3D
 var die_rect: TextureRect
+var die_badge: Control      # the "+2 / MOVE 5" note, a layer above the cube so it is never hidden
 var die_pip: StandardMaterial3D
 var treasure: Node3D       # the great chest at the gate: the first runner there opens it
 var gems := 0              # diamonds won across games
+var stock := {}            # race starters owned: id -> how many (used one per race)
+var perm := {}             # permanent upgrades owned: id -> true
+var fits: Array = ["red"]  # outfits owned
+var outfit := "red"        # outfit worn
 var wallet_hud: Control    # in-race purse: coins and diamonds, under the pause button
 var wallets: Array[Control] = []  # every purse on screen (race HUD, lobby)
 var wallet_pulse := [-9.0, -9.0]  # until when the coin / diamond pill is bumped (something just landed in it)
@@ -919,8 +930,14 @@ func build_world() -> void:
 
 	for k in bot_count + 1:
 		var r: Dictionary = ROSTER[k]
+		if k == 0:  # you wear your outfit's colour everywhere: runner, HUD, pin, die
+			r = r.duplicate()
+			r.color = FITS[outfit][1]
 		var p := {"name": r.name, "color": r.color, "off": r.off, "bot": k > 0,
 			"pos": 0, "out": false, "done": false, "danger": false, "skip": 0, "hearts": 3, "coins": 0, "revives": 2, "shield": false, "sprint": false, "safe": false, "wounded": 0, "banana": 0, "hit": {}}
+		if k == 0:  # permanent upgrades
+			p.hearts += 1 if perm.get("heart", false) else 0
+			p.revives += 1 if perm.get("respawn", false) else 0
 		p["a"] = make_actor(r.color, "YOU" if k == 0 else "", female if k == 0 else rng.randf() < 0.5)
 		p.a.position = spot(p, 0)
 		if not GFX[gfx].torches and k > 0:  # only your own torch casts real light at night
@@ -2368,19 +2385,25 @@ func _draw_track() -> void:
 
 
 func _draw_die() -> void:
-	# The die itself is the 3D cube (see _build_die3d). Only the bonus badge is drawn here.
-	if die_val == 0:
+	# The die itself is the 3D cube (see _build_die3d); the bonus badge is its own layer on top.
+	if die_badge:
+		die_badge.queue_redraw()
+
+
+func _draw_badge() -> void:
+	if die_val == 0 or die_bonus <= 0:
 		return
-	var r := Rect2(Vector2.ZERO, die.size)
-	if die_bonus > 0:  # "+2" badge on the corner and the total underneath: the move is die + bonus
-		var s := r.size.x / 170.0
-		var at_b := Vector2(r.size.x - 6 * s, 10 * s)
-		die.draw_circle(at_b, 34 * s, Color("2a2118"))
-		die.draw_circle(at_b, 29 * s, Color("5fe0ff"))
-		die.draw_string(ui_font, at_b + Vector2(-34, 13) * s, "+%d" % die_bonus, HORIZONTAL_ALIGNMENT_CENTER, 68 * s, int(34 * s), Color("2a2118"))
-		var total := "MOVE %d" % (die_val + die_bonus)
-		die.draw_string_outline(ui_font, Vector2(-40 * s, r.size.y + 30 * s), total, HORIZONTAL_ALIGNMENT_CENTER, r.size.x + 80 * s, int(30 * s), 8, Color("2a2118"))
-		die.draw_string(ui_font, Vector2(-40 * s, r.size.y + 30 * s), total, HORIZONTAL_ALIGNMENT_CENTER, r.size.x + 80 * s, int(30 * s), Color("5fe0ff"))
+	# "+2" on the corner and the total underneath: the move is die + bonus
+	var b := die_badge
+	var size := die.size
+	var s := size.x / 170.0
+	var at_b := Vector2(size.x - 2 * s, 4 * s)
+	b.draw_circle(at_b, 34 * s, Color("2a2118"))
+	b.draw_circle(at_b, 29 * s, Color("5fe0ff"))
+	b.draw_string(ui_font, at_b + Vector2(-34, 13) * s, "+%d" % die_bonus, HORIZONTAL_ALIGNMENT_CENTER, 68 * s, int(34 * s), Color("2a2118"))
+	var total := "MOVE %d" % (die_val + die_bonus)
+	b.draw_string_outline(ui_font, Vector2(-40 * s, size.y + 30 * s), total, HORIZONTAL_ALIGNMENT_CENTER, size.x + 80 * s, int(30 * s), 8, Color("2a2118"))
+	b.draw_string(ui_font, Vector2(-40 * s, size.y + 30 * s), total, HORIZONTAL_ALIGNMENT_CENTER, size.x + 80 * s, int(30 * s), Color("5fe0ff"))
 
 
 func die_face(n: int) -> Basis:
@@ -2523,8 +2546,107 @@ func prepare_world() -> void:
 
 func start_run() -> void:
 	prepare_world()
+	use_starters()
 	await intro()
 	play()
+
+
+func use_starters() -> void:
+	# race starters bought with diamonds: one of each kind owned is used up now
+	if autoplay:
+		return
+	var me := players[0]
+	var used: Array[String] = []
+	for g in STARTERS:
+		var id: String = g[0]
+		if int(stock.get(id, 0)) <= 0:
+			continue
+		stock[id] = int(stock[id]) - 1
+		used.append(g[2])
+		match id:
+			"banana":
+				me.banana = 1
+			"respawn":
+				me.revives += 1
+			"heart":
+				me.hearts += 1
+			"shield":
+				me.shield = true
+	if not used.is_empty():
+		save_settings()
+		refresh_ui()
+		note("Starters used: " + ", ".join(used))
+
+
+func cost(what: String) -> int:
+	# coin price of a BOOST; the Bargain upgrade takes a little off each
+	var c: int = COST[what]
+	return c - ((2 if c >= 10 else 1) if perm.get("discount", false) else 0)
+
+
+func shop_buy(kind: String, id: String, price: int, page: String) -> void:
+	if gems < price:
+		return
+	gems -= price
+	match kind:
+		"stock":
+			stock[id] = int(stock.get(id, 0)) + 1
+		"perm":
+			perm[id] = true
+		"fit":
+			fits.append(id)
+			outfit = id
+		"coins":
+			wallet += GEM_COINS
+			wallet_pulse[0] = clock + 0.3
+	wallet_pulse[1] = clock + 0.3
+	sfx.play("good", -2.0)
+	save_settings()
+	if kind == "fit":
+		prepare_world()  # the runner behind the menu changes clothes
+	menu(page)
+
+
+func wear(id: String, page: String) -> void:
+	outfit = id
+	save_settings()
+	prepare_world()
+	menu(page)
+
+
+func shop_row(v: Node, icon: Variant, name_text: String, sub: String, btn_text: String, enabled: bool, cb: Callable, gem := true) -> void:
+	var cream := Color("fff3c4")
+	var line := HBoxContainer.new()
+	line.add_theme_constant_override("separation", 14)
+	v.add_child(line)
+	if icon is Color:  # an outfit: a swatch of its colour
+		var sw := Control.new()
+		sw.custom_minimum_size = Vector2(64, 64)
+		sw.draw.connect(func() -> void:
+			sw.draw_style_box(_round(icon, 14, 5, Color("2a2118")), Rect2(4, 4, 56, 56))
+			sw.draw_style_box(_round(Color(1, 1, 1, 0.25), 6), Rect2(12, 10, 40, 12)))
+		line.add_child(sw)
+	else:
+		var pic := TextureRect.new()
+		pic.texture = ui_tex(icon)
+		pic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		pic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		pic.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+		pic.custom_minimum_size = Vector2(64, 64)
+		line.add_child(pic)
+	var words := VBoxContainer.new()
+	words.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	words.add_theme_constant_override("separation", -4)
+	line.add_child(words)
+	var top := title(words, name_text, 26, cream)
+	top.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	top.autowrap_mode = TextServer.AUTOWRAP_OFF
+	title(words, sub, 18, Color("c9b98a")).horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	var b := menu_button(line, btn_text, Color("2f7fa8") if gem else Color("3fae5a"), cb, enabled, 28)
+	b.custom_minimum_size = Vector2(150, 74)
+	if gem:  # a diamond beside the price
+		b.alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		b.draw.connect(func() -> void: _icon(b, "gem", Vector2(16, b.size.y / 2.0 - 22.0), 40, Color("5fe0ff")))
 
 
 func race_over() -> bool:
@@ -2612,8 +2734,8 @@ func take_turn(p: Dictionary) -> void:
 		var from_pos: int = p.pos
 		var trail: Node3D
 		if is_bot(p):
-			if is_bad(p, steps) and p.coins >= COST.reroll and rng.randf() < 0.7:  # a bot buys its way out too
-				pay(p, COST.reroll)
+			if is_bad(p, steps) and p.coins >= cost("reroll") and rng.randf() < 0.7:  # a bot buys its way out too
+				pay(p, cost("reroll"))
 				popup(p.a.position, "REROLL!", Color("5fe0ff"))
 				n = await roll(p, true)
 				steps = n + boost
@@ -2702,17 +2824,17 @@ func power_buttons(p: Dictionary) -> void:
 	clear_buttons()
 	var have := purse(p)
 	if not p.safe:
-		add_button("SAFE ROLL\n%d" % COST.reroll, Color("3f7fe0"), func() -> void: choice = "reroll", 22)
-	if not p.sprint and have >= COST.sprint and p.pos + 4 < END:
-		add_button("RUN +3\n%d" % COST.sprint, Color("ee8a1c"), func() -> void: choice = "sprint", 22)
-	if not p.shield and have >= COST.shield:
-		add_button("SHIELD\n%d" % COST.shield, Color("2f9aa8"), func() -> void: choice = "shield", 22)
-	if p.hearts < 5 and have >= COST.life:
-		add_button("LIFE\n%d" % COST.life, Color("c0392b"), func() -> void: choice = "life", 22)
+		add_button("SAFE ROLL\n%d" % cost("reroll"), Color("3f7fe0"), func() -> void: choice = "reroll", 22)
+	if not p.sprint and have >= cost("sprint") and p.pos + 4 < END:
+		add_button("RUN +3\n%d" % cost("sprint"), Color("ee8a1c"), func() -> void: choice = "sprint", 22)
+	if not p.shield and have >= cost("shield"):
+		add_button("SHIELD\n%d" % cost("shield"), Color("2f9aa8"), func() -> void: choice = "shield", 22)
+	if p.hearts < 5 and have >= cost("life"):
+		add_button("LIFE\n%d" % cost("life"), Color("c0392b"), func() -> void: choice = "life", 22)
 
 
 func buy(p: Dictionary, what: String) -> void:
-	pay(p, COST[what])
+	pay(p, cost(what))
 	var c := Color("5fe0ff")
 	match what:
 		"reroll":  # insurance: a roll that lands on a trap is thrown again
@@ -2811,7 +2933,7 @@ func swipe_dir(d: Vector2) -> String:
 
 func disp(p: Dictionary) -> String:
 	# how one runner names another: by colour
-	return "Red" if not p.bot else p.name.capitalize()
+	return str(FITS[outfit][0]).capitalize() if not p.bot else p.name.capitalize()
 
 
 func rival_says(about: Dictionary, key: String, chance := 1.0) -> void:
@@ -3046,7 +3168,7 @@ func roll(p: Dictionary, quick := false) -> int:
 		p.safe = false
 		life_open = false
 		var shown := false
-		life_btn.visible = purse(p) >= COST.reroll
+		life_btn.visible = purse(p) >= cost("reroll")
 		var left := ROLL_TIME
 		while await_roll and left > 0.0:
 			await frame()
@@ -3062,7 +3184,7 @@ func roll(p: Dictionary, quick := false) -> int:
 				buy(p, choice)
 				choice = ""
 				power_buttons(p)
-				life_btn.visible = purse(p) >= COST.reroll
+				life_btn.visible = purse(p) >= cost("reroll")
 		life_btn.visible = false
 		life_open = false
 		clear_buttons()
@@ -3164,6 +3286,11 @@ func _build_die3d() -> void:
 	die_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	die_rect.visible = false
 	die.add_child(die_rect)
+	die_badge = Control.new()  # added after the cube's picture, so it draws over it
+	die_badge.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	die_badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	die_badge.draw.connect(_draw_badge)
+	die.add_child(die_badge)
 	_fit_die3d()
 
 
@@ -4919,7 +5046,7 @@ func menu(page: String) -> void:
 			menu_button(v, "PLAY", orange, menu.bind("bots"), true, 52).custom_minimum_size = Vector2(0, 132)
 			var mp := menu_button(v, "MULTIPLAYER", wood, menu.bind("main"), false)
 			mp.draw.connect(_draw_soon.bind(mp))
-			menu_button(v, "POWER-UPS", wood, menu.bind("shop"))
+			menu_button(v, "DIAMOND SHOP", wood, menu.bind("shop"))
 			var sup := menu_button(v, "SUPPORT ME", green, open_support, true, 34)
 			sup.custom_minimum_size = Vector2(0, 92)
 			sup.draw.connect(func() -> void:  # a heart either side of the words
@@ -5043,30 +5170,39 @@ func menu(page: String) -> void:
 				sc.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 			title(v, "Online world ranking: coming soon", 20, cream)
 			icon_button(_draw_back, menu.bind("main"), false)
-		"shop":
-			title(v, "POWER-UPS", 54, GOLD)
-			var goods := [["trophy", "SAFE ROLL", "Rolls again if you land on a trap", COST.reroll], ["s_rope", "RUN +3", "Go 3 slabs further this turn", COST.sprint], ["shield", "SHIELD", "Blocks the next hit", COST.shield], ["heart", "LIFE", "One more heart", COST.life]]
-			for g in goods:
-				var line := HBoxContainer.new()
-				line.add_theme_constant_override("separation", 14)
-				v.add_child(line)
-				var pic := TextureRect.new()
-				pic.texture = ui_tex(g[0])
-				pic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-				pic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-				pic.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-				pic.custom_minimum_size = Vector2(70, 70)
-				line.add_child(pic)
-				var words := VBoxContainer.new()
-				words.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-				words.add_theme_constant_override("separation", -4)
-				line.add_child(words)
-				title(words, g[1], 28, cream).horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-				title(words, g[2], 19, Color("c9b98a")).horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-				var price := menu_button(line, str(g[3]), wood, menu.bind("shop"), false, 30)
-				price.custom_minimum_size = Vector2(130, 78)
-				price.add_theme_stylebox_override("disabled", _card_plain(Color("3a342c")))
-			title(v, "In a race, press BOOST on your turn, before you roll. Coins you win are kept between races.", 20, cream)
+		"shop", "shop_up", "shop_fit":
+			v.add_theme_constant_override("separation", 10)
+			title(v, "DIAMOND SHOP", 46, GOLD)
+			var tabs := HBoxContainer.new()
+			tabs.add_theme_constant_override("separation", 10)
+			v.add_child(tabs)
+			for t in [["shop", "STARTERS"], ["shop_up", "UPGRADES"], ["shop_fit", "OUTFITS"]]:
+				var tb := menu_button(tabs, t[1], green if page == t[0] else wood, menu.bind(t[0]), true, 22)
+				tb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+				tb.custom_minimum_size = Vector2(0, 64)
+			match page:
+				"shop":
+					title(v, "Used up by your next race. Up to 3 of each.", 19, Color("c9b98a"))
+					for g in STARTERS:
+						var have := int(stock.get(g[0], 0))
+						shop_row(v, g[1], g[2] + ("   x%d" % have if have > 0 else ""), g[3], str(g[4]) + " ", gems >= g[4] and have < 3, shop_buy.bind("stock", g[0], g[4], page))
+				"shop_up":
+					title(v, "Bought once, kept for good.", 19, Color("c9b98a"))
+					for g in UPGRADES:
+						var owned: bool = perm.get(g[0], false)
+						shop_row(v, g[1], g[2], g[3], "OWNED" if owned else str(g[4]) + " ", gems >= g[4] and not owned, shop_buy.bind("perm", g[0], g[4], page), not owned)
+				"shop_fit":
+					title(v, "Your colour on the path, the HUD and the die.", 19, Color("c9b98a"))
+					for id in FITS:
+						var f: Array = FITS[id]
+						if outfit == id:
+							shop_row(v, f[1], f[0], "Wearing", "ON", false, menu.bind(page), false)
+						elif id in fits:
+							shop_row(v, f[1], f[0], "Owned", "WEAR", true, wear.bind(id, page), false)
+						else:
+							shop_row(v, f[1], f[0], "New look", str(FIT_PRICE) + " ", gems >= FIT_PRICE, shop_buy.bind("fit", id, FIT_PRICE, page))
+			shop_row(v, "coin", "COINS", "Trade 1 diamond for %d coins" % GEM_COINS, "1 ", gems >= 1, shop_buy.bind("coins", "", 1, page))
+			title(v, "Win races and pick up diamonds on the path to earn more.", 18, cream)
 			icon_button(_draw_back, menu.bind("main"), false)
 		"settings":
 			v.add_theme_constant_override("separation", 8)
@@ -5232,6 +5368,10 @@ func save_settings() -> void:
 	cf.set_value("game", "path_len", path_len)
 	cf.set_value("game", "wallet", wallet)
 	cf.set_value("game", "gems", gems)
+	cf.set_value("game", "stock", stock)
+	cf.set_value("game", "perm", perm)
+	cf.set_value("game", "fits", fits)
+	cf.set_value("game", "outfit", outfit)
 	cf.set_value("game", "records", records)
 	cf.set_value("game", "stats", stats)
 	cf.save("user://settings.cfg")
@@ -5248,8 +5388,16 @@ func load_settings() -> void:
 		path_len = clampi(int(cf.get_value("game", "path_len", 80)), 50, 80)
 		wallet = cf.get_value("game", "wallet", 0)
 		gems = cf.get_value("game", "gems", 0)
+		stock = cf.get_value("game", "stock", {})
+		perm = cf.get_value("game", "perm", {})
+		fits = cf.get_value("game", "fits", ["red"])
+		outfit = cf.get_value("game", "outfit", "red")
+		if not FITS.has(outfit):
+			outfit = "red"
 		records = cf.get_value("game", "records", [])
 		stats = cf.get_value("game", "stats", {"races": 0, "wins": 0})
+	if OS.has_environment("VAULT_GEMS"):  # dev: a purse of diamonds for trying the shop
+		gems = int(OS.get_environment("VAULT_GEMS"))
 	AudioServer.set_bus_mute(0, not sound_on)
 
 

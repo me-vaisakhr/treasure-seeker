@@ -91,6 +91,7 @@ Environment variables for testing:
 | `VAULT_GFX=0`, `1` or `2` | Force the graphics level: low, medium, high |
 | `VAULT_LEN=n` | Force the path length (20 to 80 slabs) |
 | `VAULT_HURDLE=kind` | Every hurdle is this kind: `log`, `block`, `beam`, `blade` |
+| `VAULT_GEMS=n` | Start with n diamonds, for trying the shop (use with `VAULT_NOSAVE=1`) |
 | `VAULT_NOSAVE=1` | Never write settings or the leaderboard (always on with autoplay) |
 | `VAULT_ZOO=a,b` | Line animals up for inspection: `monkey`, `gorilla`, `tiger`, `elephant`, `cobra` |
 
