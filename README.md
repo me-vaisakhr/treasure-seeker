@@ -79,6 +79,7 @@ Environment variables for testing:
 | `VAULT_MENU=page` | Open a lobby page: `main`, `bots`, `shop`, `help`, `ranks`, `settings` |
 | `VAULT_SHOT=file` | Save a screenshot after `VAULT_SHOT_AT` seconds (default 3) and quit |
 | `VAULT_SAFE=top,bottom` | Preview a notch / home-bar inset on desktop |
+| `VAULT_GFX=0`, `1` or `2` | Force the graphics level: low, medium, high |
 | `VAULT_NOSAVE=1` | Never write settings or the leaderboard (always on with autoplay) |
 | `VAULT_ZOO=a,b` | Line animals up for inspection: `monkey`, `gorilla`, `tiger`, `elephant`, `cobra` |
 

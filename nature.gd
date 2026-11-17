@@ -226,10 +226,14 @@ func build(m) -> void:
 	mnoise.frequency = 0.018
 	var bottom := lo.y - 20.0
 	var blossom: Array[Color] = [Color("e2552e"), Color("e667a5"), Color("8a5fd0"), Color("f2c53a")]
-	var mx := x0 - 60.0
-	while mx <= x1 + 60.0:
-		var mz := z0 - 60.0
-		while mz <= z1 + 60.0:
+	# lowest graphics level: a narrower ring of mountains made of bigger blocks
+	var lite: bool = main.GFX[main.gfx].lite
+	var ring := 38.0 if lite else 60.0
+	var stp := 6.0 if lite else 4.0
+	var mx := x0 - ring
+	while mx <= x1 + ring:
+		var mz := z0 - ring
+		while mz <= z1 + ring:
 			var dout := maxf(maxf(maxf(x0 - mx, mx - x1), maxf(z0 - mz, mz - z1)), 0.0)
 			var in_cave := absf(mx - path[0].x) < 7.0 and mz > z1 - 3.0 and mz < z1 + 16.0  # room for the start cave
 			if dout > 0.5 and not in_cave:
@@ -243,13 +247,13 @@ func build(m) -> void:
 					col = Color("9c9482")
 				elif rel > 14.0 and mn > -0.1:
 					col = Color("7d8068")
-				add(solid_x, solid_c, Vector3(6.0, top - bottom, 6.0), Vector3(mx, (top + bottom) / 2.0, mz), main.shade(col))
+				add(solid_x, solid_c, Vector3(stp * 1.5, top - bottom, stp * 1.5), Vector3(mx, (top + bottom) / 2.0, mz), main.shade(col))
 				if rel < 18.0 and rng.randf() < 0.4:  # trees cling to the lower slopes
 					var tc := greens[rng.randi_range(0, 3)] if rng.randf() > 0.12 else blossom[rng.randi_range(0, 3)]
 					add(leaf_x, leaf_c, Vector3(3.0, 2.2, 3.0), Vector3(mx + rng.randf_range(-1, 1), top + 1.6, mz + rng.randf_range(-1, 1)), main.shade(tc))
 					add(solid_x, solid_c, Vector3(0.6, 1.2, 0.6), Vector3(mx, top + 0.4, mz), Color("5e4127"))
-			mz += 4.0
-		mx += 4.0
+			mz += stp
+		mx += stp
 
 	var solid := shader_mat(FOLIAGE_SHADER)  # same pixel shading, no wind sway
 	solid.set_shader_parameter("strength", 0.0)
@@ -366,7 +370,7 @@ func _plant(x: float, h: float, z: float, room: float) -> void:
 		add(leaf_x, leaf_c, Vector3(s * 1.3, s, s * 1.3), Vector3(x, h + s / 2.0, z), main.shade(Color("3f8a34")))
 		if rng.randf() < 0.4:
 			add(leaf_x, leaf_c, Vector3.ONE * 0.18, Vector3(x + 0.3, h + s + 0.05, z), [Color("ff6b8b"), Color("ffd84a"), Color("ffffff")][rng.randi_range(0, 2)])
-	elif r < 0.88:
+	elif r < 0.88 and main.GFX[main.gfx].tufts:  # grass tufts: thousands of tiny boxes, only at the top level
 		for k in 3:
 			var gh := rng.randf_range(0.3, 0.7)
 			add(leaf_x, leaf_c, Vector3(0.14, gh, 0.14), Vector3(x + rng.randf_range(-0.7, 0.7), h + gh / 2.0, z + rng.randf_range(-0.7, 0.7)), main.shade(Color("72bd4c")))

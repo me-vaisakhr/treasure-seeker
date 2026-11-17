@@ -15,6 +15,15 @@ const END := 80          # treasure slab
 const GAP := 2.4         # distance between slab centres
 const JUMP_WINDOW := 0.9 # seconds to tap for a spike jump
 const HARMFUL := ["spike", "crumble", "snake", "tiger"]
+# Graphics levels, lightest first. fps: frame cap. shrink: the 3D view is drawn at
+# 1/shrink resolution. range: props further than this are not drawn. lite: fewer,
+# bigger mountain blocks. tufts: grass tufts (thousands of tiny boxes).
+# torches: every runner's torch casts real light at night (else only yours).
+const GFX := [
+	{"name": "LOW", "about": "30 fps, no shadows or glow. Coolest and longest battery", "fps": 30, "shadows": false, "glow": false, "shrink": 3, "range": 60.0, "lite": true, "tufts": false, "torches": false},
+	{"name": "MEDIUM", "about": "45 fps, glow but no shadows", "fps": 45, "shadows": false, "glow": true, "shrink": 2, "range": 90.0, "lite": false, "tufts": false, "torches": false},
+	{"name": "HIGH", "about": "60 fps, shadows, glow and full scenery", "fps": 60, "shadows": true, "glow": true, "shrink": 2, "range": 120.0, "lite": false, "tufts": true, "torches": true},
+]
 const SUPPORT_URL := "https://buymeacoffee.com/vrkrishna9e"
 
 # What runners say, comic-strip style. One line is picked at random.
@@ -262,6 +271,8 @@ var bubble_until := 0.0
 var bubble_start := -9.0
 var bubble_q: Array = []   # lines waiting their turn: [speaker, text, seconds]
 var zoom_side := 1.9       # how far round to the side the close-up camera sits
+var gfx := 2                   # graphics level: index into GFX
+var view_box: SubViewportContainer
 var female := false            # your character
 var pin_at := {}      # player name -> where their pin is drawn on the race bar (slabs, eased)
 var pin_bo := 0.0     # the boulder's pin
@@ -298,10 +309,14 @@ func _ready() -> void:
 	sfx.start_music.call_deferred()
 	_build_look()
 	_build_env()
+	gfx = 0 if OS.has_feature("mobile") or OS.has_feature("web") else 2  # default; the saved setting overrides it
 	_build_ui()
 	apply_safe_area()
 	get_viewport().size_changed.connect(apply_safe_area)
 	load_settings()
+	if OS.has_environment("VAULT_GFX"):  # dev: force the level
+		gfx = clampi(int(OS.get_environment("VAULT_GFX")), 0, GFX.size() - 1)
+	apply_quality()
 	prepare_world()
 	if boot_bots > 0:  # came back from "Restart"
 		var n := boot_bots
@@ -345,6 +360,7 @@ func _build_look() -> void:
 	c.stretch_shrink = PIXEL
 	c.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	c.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	view_box = c
 	var post_sh := Shader.new()
 	post_sh.code = POST_SHADER
 	var post := ShaderMaterial.new()
@@ -412,6 +428,7 @@ func box(parent: Node3D, size: Vector3, at: Vector3, c: Color) -> MeshInstance3D
 	mi.mesh = bm
 	mi.material_override = mat(c)
 	mi.position = at
+	mi.visibility_range_end = GFX[gfx].range  # far-off props are not drawn at all
 	parent.add_child(mi)
 	return mi
 
@@ -859,6 +876,8 @@ func build_world() -> void:
 			"pos": 0, "out": false, "done": false, "danger": false, "skip": 0, "hearts": 3, "coins": 0, "revives": 2, "shield": false, "wounded": 0, "banana": 0, "hit": {}}
 		p["a"] = make_actor(r.color, "YOU" if k == 0 else "", female if k == 0 else rng.randf() < 0.5)
 		p.a.position = spot(p, 0)
+		if not GFX[gfx].torches and k > 0:  # only your own torch casts real light at night
+			p.a.torch_light.visible = false
 		players.append(p)
 	focus_p = players[0]
 	cam_base = path[0]
@@ -4232,13 +4251,19 @@ func menu(page: String) -> void:
 			title(v, "CAMERA", 28, cream)
 			menu_button(v, "FOLLOW THE TURN", green if view_mode == "turn" else wood, set_view.bind("turn"), true, 32)
 			menu_button(v, "STAY ON MY PLAYER", green if view_mode == "mine" else wood, set_view.bind("mine"), true, 32)
-			title(v, "A gold arrow always marks whose turn it is", 20, cream)
 			title(v, "YOUR CHARACTER", 28, cream)
 			var who_row := HBoxContainer.new()
 			who_row.add_theme_constant_override("separation", 14)
 			v.add_child(who_row)
 			menu_button(who_row, "MALE", green if not female else wood, set_female.bind(false), true, 30).size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			menu_button(who_row, "FEMALE", green if female else wood, set_female.bind(true), true, 30).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			title(v, "GRAPHICS", 28, cream)
+			var gfx_row := HBoxContainer.new()
+			gfx_row.add_theme_constant_override("separation", 14)
+			v.add_child(gfx_row)
+			for lv in GFX.size():
+				menu_button(gfx_row, GFX[lv].name, green if gfx == lv else wood, set_gfx.bind(lv), true, 26).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			title(v, GFX[gfx].about, 20, cream)
 			title(v, "SOUND", 28, cream)
 			menu_button(v, "ON" if sound_on else "OFF", green if sound_on else wood, toggle_sound, true, 36)
 			icon_button(_draw_back, menu.bind("main"), false)
@@ -4307,6 +4332,26 @@ func set_view(mode: String) -> void:
 	menu("settings")
 
 
+func apply_quality() -> void:
+	# Lower levels trade polish for a cool phone: fewer frames, no shadow
+	# pass (which draws the scene a second time), no glow, chunkier pixels.
+	var q: Dictionary = GFX[gfx]
+	Engine.max_fps = q.fps
+	sun.shadow_enabled = q.shadows
+	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
+	sun.directional_shadow_max_distance = 70.0
+	env.glow_enabled = q.glow
+	view_box.stretch_shrink = q.shrink
+
+
+func set_gfx(level: int) -> void:
+	gfx = level
+	save_settings()
+	apply_quality()
+	prepare_world()  # scenery is built lighter or fuller to match
+	menu("settings")
+
+
 func set_female(on: bool) -> void:
 	female = on
 	save_settings()
@@ -4332,6 +4377,7 @@ func save_settings() -> void:
 	cf.set_value("game", "view", view_mode)
 	cf.set_value("game", "sound", sound_on)
 	cf.set_value("game", "female", female)
+	cf.set_value("game", "gfx", gfx)
 	cf.set_value("game", "wallet", wallet)
 	cf.set_value("game", "records", records)
 	cf.set_value("game", "stats", stats)
@@ -4344,6 +4390,7 @@ func load_settings() -> void:
 		view_mode = cf.get_value("game", "view", "turn")
 		sound_on = cf.get_value("game", "sound", true)
 		female = cf.get_value("game", "female", false)
+		gfx = clampi(int(cf.get_value("game", "gfx", gfx)), 0, GFX.size() - 1)
 		wallet = cf.get_value("game", "wallet", 0)
 		records = cf.get_value("game", "records", [])
 		stats = cf.get_value("game", "stats", {"races": 0, "wins": 0})
