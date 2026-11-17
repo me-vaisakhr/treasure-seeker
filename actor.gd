@@ -52,7 +52,7 @@ var sq := 0.0     # body squash (negative = compressed)
 var sq_v := 0.0
 
 
-func setup(m, color: Color, tag := "") -> void:
+func setup(m, color: Color, tag := "", female := false) -> void:
 	main = m
 	seed_t = m.rng.randf() * 10.0
 	var skin := Color("c68e5f")
@@ -67,31 +67,44 @@ func setup(m, color: Color, tag := "") -> void:
 		hip.position = Vector3(side * 0.15, 0.58, 0)
 		add_child(hip)
 		main.box(hip, Vector3(0.2, 0.28, 0.22), Vector3(0, -0.14, 0), skin.darkened(0.08))
+		if female:  # shorts, a thigh strap, taller boots
+			main.box(hip, Vector3(0.23, 0.15, 0.25), Vector3(0, -0.06, 0), Color("5b4a36"))
+			if side == 1:
+				main.box(hip, Vector3(0.22, 0.05, 0.24), Vector3(0, -0.2, 0), leather)
 		var knee := Node3D.new()
 		knee.position = Vector3(0, -0.28, 0)
 		hip.add_child(knee)
 		main.box(knee, Vector3(0.18, 0.2, 0.2), Vector3(0, -0.1, 0), skin.darkened(0.12))
 		main.box(knee, Vector3(0.24, 0.13, 0.32), Vector3(0, -0.245, -0.04), leather)
+		if female:
+			main.box(knee, Vector3(0.2, 0.12, 0.22), Vector3(0, -0.13, 0), leather)
 		hips.append(hip)
 		knees.append(knee)
 		# arm: shoulder -> upper arm -> elbow -> forearm + hand
 		var sh := Node3D.new()
 		sh.position = Vector3(side * 0.37, 0.56, 0)
 		body.add_child(sh)
-		main.box(sh, Vector3(0.17, 0.25, 0.19), Vector3(0, -0.11, 0), color)
+		main.box(sh, Vector3(0.17, 0.25, 0.19) if not female else Vector3(0.14, 0.25, 0.16), Vector3(0, -0.11, 0), color if not female else skin)
 		var el := Node3D.new()
 		el.position = Vector3(0, -0.24, 0)
 		sh.add_child(el)
 		main.box(el, Vector3(0.15, 0.22, 0.17), Vector3(0, -0.1, 0), skin)
 		main.box(el, Vector3(0.17, 0.1, 0.19), Vector3(0, -0.24, 0), skin.darkened(0.1))
+		if female:  # fingerless glove
+			main.box(el, Vector3(0.17, 0.09, 0.19), Vector3(0, -0.17, 0), leather)
 		shoulders.append(sh)
 		elbows.append(el)
 
-	main.box(body, Vector3(0.54, 0.58, 0.32), Vector3(0, 0.3, 0), color)
+	main.box(body, Vector3(0.54, 0.58, 0.32) if not female else Vector3(0.44, 0.58, 0.28), Vector3(0, 0.3, 0), color)
+	if female:  # bare shoulders above a tank top, narrower waist
+		main.box(body, Vector3(0.46, 0.1, 0.3), Vector3(0, 0.56, 0), skin)
+		main.box(body, Vector3(0.1, 0.12, 0.3), Vector3(-0.13, 0.56, 0), color)
+		main.box(body, Vector3(0.1, 0.12, 0.3), Vector3(0.13, 0.56, 0), color)
 	main.box(body, Vector3(0.57, 0.1, 0.35), Vector3(0, 0.05, 0), leather)
 	main.box(body, Vector3(0.12, 0.11, 0.37), Vector3(0, 0.05, 0), Color("e8b530"))
 	main.box(body, Vector3(0.08, 0.5, 0.05), Vector3(0.16, 0.32, -0.17), leather)  # strap
-	main.box(body, Vector3(0.52, 0.13, 0.4), Vector3(0, 0.63, 0), color)          # scarf
+	if not female:
+		main.box(body, Vector3(0.52, 0.13, 0.4), Vector3(0, 0.63, 0), color)          # scarf
 
 	# backpack hangs from the shoulders and swings on a spring
 	pack = Node3D.new()
@@ -128,13 +141,24 @@ func setup(m, color: Color, tag := "") -> void:
 	main.box(bandage, Vector3(0.1, 0.1, 0.03), Vector3(0.12, 0.08, 0.23), Color("d6402e"))
 	main.box(bandage, Vector3(0.08, 0.2, 0.05), Vector3(-0.2, -0.02, 0.24), Color("f6f1e4"))
 	bandage.visible = false
-	# hat in the player colour (it is what you see from behind); sits on a spring
+	# On the head: a hat in the player colour (it is what you see from behind),
+	# or for the female explorer dark hair, a headband in her colour and a
+	# long braid that swings behind her. Either sits on a spring.
 	hat = Node3D.new()
 	hat.position = Vector3(0, 0.23, 0)
 	head.add_child(hat)
-	main.box(hat, Vector3(0.72, 0.06, 0.72), Vector3.ZERO, color)
-	main.box(hat, Vector3(0.42, 0.2, 0.42), Vector3(0, 0.12, 0), color.darkened(0.1))
-	main.box(hat, Vector3(0.44, 0.07, 0.44), Vector3(0, 0.06, 0), Color("fff8e1"))
+	if female:
+		var hair := Color("3a2416")
+		main.box(hat, Vector3(0.48, 0.12, 0.46), Vector3(0, 0.0, 0.0), hair)
+		main.box(hat, Vector3(0.48, 0.3, 0.12), Vector3(0, -0.14, 0.2), hair)
+		main.box(hat, Vector3(0.1, 0.22, 0.4), Vector3(-0.24, -0.12, 0.02), hair)
+		main.box(hat, Vector3(0.1, 0.22, 0.4), Vector3(0.24, -0.12, 0.02), hair)
+		main.box(hat, Vector3(0.5, 0.07, 0.48), Vector3(0, -0.07, 0), color)  # headband
+		main.box(hat, Vector3(0.16, 0.16, 0.14), Vector3(0, -0.06, 0.3), color)  # braid tie
+	else:
+		main.box(hat, Vector3(0.72, 0.06, 0.72), Vector3.ZERO, color)
+		main.box(hat, Vector3(0.42, 0.2, 0.42), Vector3(0, 0.12, 0), color.darkened(0.1))
+		main.box(hat, Vector3(0.44, 0.07, 0.44), Vector3(0, 0.06, 0), Color("fff8e1"))
 
 	# a soft dark shadow on the ground. It is its own object, not part of the
 	# body: it stays on the floor when the runner jumps, and shrinks with height.
@@ -183,6 +207,10 @@ func setup(m, color: Color, tag := "") -> void:
 	torch.add_child(torch_light)
 	torch.visible = false
 
+	if female:  # the braid: a chain that swings and trails like the scarf does
+		add_strand(head, Vector3(0, 0.12, 0.34), 5, 0.15, Vector2(0.13, 0.11), main.mat(Color("3a2416")), Vector3.UP, 0.9, false)
+		last_pos = position
+		return
 	# cloth: scarf tail behind the neck, short wrap round the waist
 	add_strand(body, Vector3(0.12, 0.63, 0.2), 4, 0.17, Vector2(0.16, 0.04), main.mat(color), Vector3.UP, 1.5, false)
 	for k in 8:
@@ -325,6 +353,25 @@ func _process(delta: float) -> void:
 			knee = -0.2
 			arm = -0.7
 			elbow = 0.3
+		elif pose == "thumb":  # thumbs up to the player
+			arm = 1.55 if i == 1 else 0.1
+			elbow = 0.45 if i == 1 else 0.2
+		elif pose == "sad":  # slumped
+			arm = 0.12
+			elbow = 0.05
+			knee = -0.2
+		elif pose == "shrug":  # palms up: "what can I do?"
+			arm = 0.45
+			elbow = 1.75
+		elif pose == "facepalm":
+			arm = 2.05 if i == 1 else 0.1
+			elbow = 2.35 if i == 1 else 0.2
+		elif pose == "stomp":  # stamping in a temper
+			var st := maxf(0.0, sin(t * 15.0 + i * PI))
+			thigh = 0.95 * st
+			knee = -1.1 * st
+			arm = 0.25
+			elbow = 1.5
 		elif pose == "crouch":  # coiled, ready to spring
 			thigh = 0.85
 			knee = -1.6
@@ -348,7 +395,7 @@ func _process(delta: float) -> void:
 		knees[i].rotation.x = lerpf(knees[i].rotation.x, knee, lk)
 		shoulders[i].rotation.x = lerpf(shoulders[i].rotation.x, arm, lk)
 		elbows[i].rotation.x = lerpf(elbows[i].rotation.x, elbow, lk)
-		shoulders[i].rotation.z = lerpf(shoulders[i].rotation.z, side * (0.25 if air or hang else 0.0), k)
+		shoulders[i].rotation.z = lerpf(shoulders[i].rotation.z, side * (0.25 if air or hang else (0.75 if pose == "shrug" else 0.0)), k)
 
 	# ---- face
 	var bz := 0.0   # brow tilt (inner ends down = angry)
@@ -407,6 +454,12 @@ func _process(delta: float) -> void:
 		lean = -0.25
 		bob = -0.2
 		look = 0.0
+	elif pose == "sad" or pose == "facepalm":
+		lean = -0.3
+		bob = -0.05
+		look = 0.0
+	elif pose == "thumb" or pose == "shrug" or pose == "stomp":
+		look = 0.0
 	elif air:
 		lean = -0.28
 		look = 0.0
@@ -423,7 +476,8 @@ func _process(delta: float) -> void:
 	body.rotation.y = lerpf(body.rotation.y, twist, k)
 	body.rotation.z = lerpf(body.rotation.z, roll, k)
 	head.rotation.y = lerpf(head.rotation.y, 0.0 if look_up else look - twist * 0.8, minf(1.0, delta * 6.0))  # head stays level with the path
-	head.rotation.x = lerpf(head.rotation.x, 0.55 if look_up else 0.0, minf(1.0, delta * 8.0))
+	var nod := 0.55 if look_up else (-0.5 if pose == "sad" else (-0.3 if pose == "facepalm" else 0.0))
+	head.rotation.x = lerpf(head.rotation.x, nod, minf(1.0, delta * 8.0))
 
 	# ---- springs: weight and follow-through
 	# body squash: compresses when a fall is stopped, then rebounds

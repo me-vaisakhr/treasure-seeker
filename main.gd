@@ -15,6 +15,31 @@ const END := 80          # treasure slab
 const GAP := 2.4         # distance between slab centres
 const JUMP_WINDOW := 0.9 # seconds to tap for a spike jump
 const HARMFUL := ["spike", "crumble", "snake", "tiger"]
+const SUPPORT_URL := "https://buymeacoffee.com/vrkrishna9e"
+
+# What runners say, comic-strip style. One line is picked at random.
+const LINES := {
+	"rope": ["Yes! A rope! Let's go!", "A rope! My lucky day!", "Shortcut! Hold tight!", "Finally, some luck!"],
+	"snake": ["A COBRA?! Why me?!", "Nice snake... good snake...", "Oh no. Not the snake.", "Whose idea was this roll?!"],
+	"tiger": ["Is that... a TIGER?!", "Nobody move. Nobody breathe.", "I am NOT cat food!", "Great. A tiger. Thanks, dice."],
+	"spike": ["Spikes! Jump, jump, jump!", "Mind the pointy bits!", "I hate spikes!"],
+	"crumble": ["That slab looks cracked...", "It will hold. Probably.", "Why is the floor creaking?!"],
+	"mystery": ["Ooh, what is in there?", "Treasure? Or trouble?", "Please be gold. Please be gold."],
+	"treasure": ["The gate! I can see the gold!", "Treasure, here I come!", "Almost rich!"],
+	"boulder": ["RUN! The boulder!", "It is right behind us!", "Faster! FASTER!", "Roll high, or we are pancakes!"],
+	"boulder_hit": ["Oof! Flattened!", "That... was a big rock.", "I saw stars. And a boulder."],
+	"hit": ["Ouch! That hurt!", "My poor bones!", "I felt that one.", "Not my best moment."],
+	"six": ["A SIX! Yes! Again!", "Now THAT is a roll!", "The dice love me!"],
+	"high": ["Good roll! Go go go!", "That will do nicely!", "On our way!"],
+	"one": ["A ONE?! Come on, dice!", "One. Just... one.", "Who rolled that? You did!", "My grandma rolls better!"],
+	"low": ["Two steps. Wonderful.", "Is that all?!", "We will be here all day.", "Blame the dice, not me."],
+	"tailwind": ["I am catching up!", "Wait for me!", "Wind at my back!"],
+	"win_fight": ["Ha! My slab now!", "Too easy!", "Who is next?"],
+	"lose_fight": ["I let you win.", "Ow. Rude.", "This is not over!"],
+	"dodge": ["Not this time!", "Fool me once...", "I know that trick!"],
+	"reborn": ["I am back! Miss me?", "Right. Take two.", "Still in this race!"],
+	"win": ["I did it! The treasure!", "Gold! Glorious gold!", "Champion of the jungle!"],
+}
 const HEAL_TURNS := 2     # own turns a wound takes to heal; wounded runners fight worse
 const ROLL_TIME := 8.0   # seconds a player has to roll before the turn is lost
 const PIXEL := 2          # 3D is rendered at 1/PIXEL resolution for the pixel-art look
@@ -207,6 +232,11 @@ var card_icon: TextureRect
 var card_title: Label
 var card_sub: Label
 var card_tw: Tween
+var bubble: PanelContainer     # comic speech bubble that follows a runner
+var bubble_lbl: Label
+var bubble_who: Node3D
+var bubble_until := 0.0
+var female := false            # your character
 var pin_at := {}      # player name -> where their pin is drawn on the race bar (slabs, eased)
 var pin_bo := 0.0     # the boulder's pin
 var flash_rect: ColorRect  # full-screen tint when you are hurt or reborn
@@ -797,7 +827,7 @@ func build_world() -> void:
 		var r: Dictionary = ROSTER[k]
 		var p := {"name": r.name, "color": r.color, "off": r.off, "bot": k > 0,
 			"pos": 0, "out": false, "done": false, "danger": false, "skip": 0, "hearts": 3, "coins": 0, "revives": 2, "shield": false, "wounded": 0, "banana": 0, "hit": {}}
-		p["a"] = make_actor(r.color, "YOU" if k == 0 else "")
+		p["a"] = make_actor(r.color, "YOU" if k == 0 else "", female if k == 0 else rng.randf() < 0.5)
 		p.a.position = spot(p, 0)
 		players.append(p)
 	focus_p = players[0]
@@ -1340,6 +1370,8 @@ func _ride(f: float, s: Strand, root: Node3D) -> void:
 	# Rider hangs from the rope by the hands; their weight makes it sag.
 	s.weigh(f, 0.035)
 	var at := s.point_at(f)
+	if Engine.get_frames_drawn() % 4 == 0:  # sparkles shaken off the rope
+		burst(at, Color("fff3a8"), 2, 1.5)
 	var ahead := s.point_at(minf(1.0, f + 0.05)) - at
 	root.position = at - Vector3(0, 1.75, 0)
 	if Vector2(ahead.x, ahead.z).length() > 0.01:
@@ -1366,10 +1398,10 @@ func _build_scenery() -> void:
 		box(gate, Vector3.ONE * 0.2, Vector3(rng.randf_range(-1.6, 1.6), 0.35, rng.randf_range(-0.9, 1.2)), shade(GOLD))
 
 
-func make_actor(c: Color, tag := "") -> Node3D:
+func make_actor(c: Color, tag := "", fem := false) -> Node3D:
 	var a: Node3D = Actor.new()
 	world.add_child(a)
-	a.setup(self, c, tag)
+	a.setup(self, c, tag, fem)
 	return a
 
 
@@ -1570,6 +1602,27 @@ func _build_ui() -> void:
 	flash_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	flash_rect.color = Color(1, 0, 0, 0)
 	layer.add_child(flash_rect)
+
+	# comic speech bubble; follows a runner's head
+	bubble = PanelContainer.new()
+	bubble.add_theme_stylebox_override("panel", _round(Color("fffdf2"), 18, 4, Color("2a2118")))
+	bubble.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bubble.visible = false
+	layer.add_child(bubble)
+	bubble_lbl = Label.new()
+	bubble_lbl.add_theme_font_override("font", ui_font)
+	bubble_lbl.add_theme_font_size_override("font_size", 24)
+	bubble_lbl.add_theme_color_override("font_color", Color("2a2118"))
+	bubble_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	bubble_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	bubble_lbl.custom_minimum_size = Vector2(250, 0)
+	bubble_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bubble.add_child(bubble_lbl)
+	bubble.draw.connect(func() -> void:  # the tail, pointing down at the speaker
+		var w := bubble.size.x / 2.0
+		var h := bubble.size.y
+		bubble.draw_colored_polygon(PackedVector2Array([Vector2(w - 16, h - 3), Vector2(w + 16, h - 3), Vector2(w - 6, h + 22)]), Color("2a2118"))
+		bubble.draw_colored_polygon(PackedVector2Array([Vector2(w - 11, h - 5), Vector2(w + 11, h - 5), Vector2(w - 5, h + 13)]), Color("fffdf2")))
 
 	# landing card: appears after a roll and says what it leads to
 	card = PanelContainer.new()
@@ -2187,6 +2240,19 @@ func start_run() -> void:
 	play()
 
 
+func race_over() -> bool:
+	# The race is over for you when you are done or out, or when you are the
+	# only runner still on the path (everyone else has finished or dropped out).
+	var me := players[0]
+	if not active(me):
+		return true
+	var left := 0
+	for p in players:
+		if active(p):
+			left += 1
+	return left <= 1 and not finished.is_empty()
+
+
 func play() -> void:
 	var me := players[0]
 	while true:
@@ -2194,12 +2260,12 @@ func play() -> void:
 			if not active(p):
 				continue
 			await take_turn(p)
-			if not active(me):
+			if race_over():
 				game_over(me)
 				return
 		round_no += 1
 		await boulder_turn()
-		if not active(me):
+		if race_over():
 			game_over(me)
 			return
 
@@ -2227,6 +2293,7 @@ func take_turn(p: Dictionary) -> void:
 		var n: int = await roll(p)
 		if n == 0:
 			break
+		await react(p, n)
 		var steps := n
 		var lead := 0
 		for q in players:
@@ -2239,6 +2306,7 @@ func take_turn(p: Dictionary) -> void:
 			popup(p.a.position, "TAILWIND +%d" % boost, Color("5fe0ff"))
 			burst(p.a.position + Vector3(0, 1, 0), Color("5fe0ff"), 12, 4.0)
 			sfx.play("good", -8.0, 1.3)
+			quip(p, "tailwind", 0.6)
 		var trail := show_trail(p, steps)
 		await wait(preview(p, steps))
 		p.a.express("")
@@ -2255,6 +2323,56 @@ func take_turn(p: Dictionary) -> void:
 	set_die(0)
 	spot_off()
 	await wait(1.0)  # hold on this runner so the result can sink in before the camera moves on
+
+
+func quip(p: Dictionary, key: String, chance := 1.0, secs := 2.2) -> void:
+	# a runner says something, in a speech bubble over their head
+	if rng.randf() > chance or not LINES.has(key) or not is_instance_valid(p.a):
+		return
+	var lines: Array = LINES[key]
+	bubble_lbl.text = lines[rng.randi_range(0, lines.size() - 1)]
+	bubble_who = p.a
+	bubble_until = clock + secs
+	bubble.size = Vector2.ZERO  # shrink to fit the new line
+	bubble.visible = true
+	bubble.pivot_offset = Vector2(140, 60)
+	bubble.scale = Vector2(0.5, 0.5)
+	bubble.create_tween().tween_property(bubble, "scale", Vector2.ONE, 0.18).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+
+
+func face_player(p: Dictionary) -> void:
+	# turn to look straight out of the screen, at whoever is playing
+	var to_cam: Vector3 = cam.position - p.a.position
+	p.a.turn_to(atan2(-to_cam.x, -to_cam.z))
+
+
+func react(p: Dictionary, n: int) -> void:
+	# After the die lands the runner turns to the player and shows what they
+	# think of it: delight at a big roll, despair or a tantrum at a small one,
+	# and now and then a word about whose fault it is.
+	if n >= 3 and n <= 4:
+		return
+	if p.bot and n != 1 and n != 6 and rng.randf() < 0.5:
+		return
+	var root: Node3D = p.a
+	face_player(p)
+	await wait(0.28)
+	if n >= 5:
+		root.express("happy")
+		root.pose = "cheer" if n == 6 else "thumb"
+		quip(p, "six" if n == 6 else "high")
+		if n == 6:
+			await hop(root, root.position, 0.6, 0.3)
+			burst(root.position + Vector3(0, 1.6, 0), GOLD, 10, 4.0)
+	else:
+		root.express("angry" if rng.randf() < 0.5 else "pain")
+		root.pose = ["facepalm", "shrug", "stomp", "sad"][rng.randi_range(0, 3)]
+		quip(p, "one" if n == 1 else "low")
+	await wait(0.95)
+	root.pose = ""
+	root.express("")
+	root.turn_to(yaws[clampi(p.pos, 0, END)])
+	await wait(0.15)
 
 
 func show_card(icon_id: String, title_text: String, sub: String, c: Color, secs: float) -> void:
@@ -2291,29 +2409,37 @@ func preview(p: Dictionary, n: int) -> float:
 	var red := Color("ff5a4a")
 	if dest >= END:
 		show_card("trophy", "%s: THE TREASURE!" % who, "This roll reaches the gate", GOLD, 1.3)
+		quip(p, "treasure")
 		p.a.express("happy")
 	elif kind in HARMFUL and p.hit.has(dest):
 		show_card("", "%s: A KNOWN TRAP" % who, "Caught once already: dodged this time", Color("7dff9b"), 1.2)
 	elif kind == "rope":
 		show_card("s_rope", "%s: ROPE!" % who, "Swing ahead %d slabs" % (rope_to[dest] - dest), Color("3fe07a"), 1.3)
+		quip(p, "rope")
 		p.a.express("happy")
 	elif kind == "snake":
 		show_card("s_snake", "%s: COBRA!" % who, "Thrown back %d slabs" % (dest - snake_to[dest]), red, 1.4)
+		quip(p, "snake")
 		p.a.express("scared")
 	elif kind == "tiger":
 		show_card("s_tiger", "%s: TIGER!" % who, "Lose a life and flee back", red, 1.4)
+		quip(p, "tiger")
 		p.a.express("scared")
 	elif kind == "crumble":
 		show_card("s_crumble", "%s: CRACKED SLAB!" % who, "It gives way: lose a life", Color("ff9a2e"), 1.4)
+		quip(p, "crumble")
 		p.a.express("scared")
 	elif kind == "spike":
 		show_card("s_spike", "%s: SPIKES!" % who, "Tap in time to jump them", red, 1.3)
+		quip(p, "spike")
 		p.a.express("scared")
 	elif kind == "mystery":
 		show_card("s_mystery", "%s: MYSTERY" % who, "An animal or a treasure chest", Color("b06aff"), 1.2)
+		quip(p, "mystery")
 		p.a.express("wow")
 	elif spikes:
 		show_card("s_spike", "%s: SPIKES ON THE WAY" % who, "Tap in time to jump them", red, 1.2)
+		quip(p, "spike")
 		p.a.express("scared")
 	else:
 		return 0.4
@@ -2425,6 +2551,8 @@ func move(p: Dictionary, n: int) -> void:
 		popup(root.position, "#%d" % finished.size(), GOLD)
 		sfx.play("win")
 		root.pose = "cheer"
+		face_player(p)
+		quip(p, "win", 1.0, 3.0)
 		fireworks(root.position)
 		shake(0.3)
 		if finished.size() == 1:
@@ -2591,13 +2719,33 @@ func jump_phase(p: Dictionary, nxt: int) -> bool:
 		earn(p, 2)
 		spot_off()
 		return true
+	# Missed: the spikes drop out of sight, the runner steps on, and then they
+	# shoot up underfoot and launch them into the air with a yelp.
 	say("%s hit the spikes!" % subj(p))
-	await hop(root, spot(p, nxt), 0.4, 0.2)
+	spotlight(p, 0.5)
+	var trap: Node3D = spikes[nxt]
+	trap.position.y = -0.9
+	await hop(root, spot(p, nxt), 0.4, 0.22)
 	p.pos = nxt
 	p.hit[nxt] = true
-	shake(0.3)
+	await wait(0.18)
+	var up := trap.create_tween()
+	up.tween_property(trap, "position:y", 0.35, 0.07)
+	up.tween_property(trap, "position:y", 0.0, 0.2)
+	sfx.play("ko", 0.0, 1.5)
+	shake(0.35)
+	popup(root.position, "YEOW!", Color("ff6b5e"))
+	root.pose = "hit"
+	root.express("pain")
+	burst(root.position + Vector3(0, 0.4, 0), Color("e2463a"), 18, 5.0)
 	await hitstop()
-	burst(root.position, Color("e2463a"), 18, 5.0)
+	root.air = true
+	await hop(root, spot(p, nxt), 2.0, 0.7)
+	root.air = false
+	root.pose = ""
+	squash(root)
+	sfx.play("bodyfall")
+	spot_off()
 	await hurt(p)
 	return false
 
@@ -2632,6 +2780,7 @@ func land(p: Dictionary, safe := false) -> void:
 			return
 		if p.hit.has(p.pos):  # fooled once already: they know this one
 			popup(p.a.position, "DODGED!", Color("7dff9b"))
+			quip(p, "dodge")
 			sfx.play("good", -8.0)
 			p.a.express("happy", 0.8)
 			await wait(0.5)
@@ -2842,6 +2991,7 @@ func hurt(p: Dictionary) -> String:
 	p.a.flash()
 	p.a.pose = "hit"
 	p.a.express("pain", 1.0)
+	quip(p, "hit", 0.6)
 	burst(p.a.position + Vector3(0, 1.5, 0), Color("e2463a"), 18, 5.0)   # the lost heart shatters
 	burst(p.a.position + Vector3(0, 1.5, 0), Color("ff9aa0"), 8, 3.0)
 	hud_lose(p, "heart")
@@ -2964,6 +3114,8 @@ func reborn(p: Dictionary, at_slab: int) -> void:
 		burst(at + Vector3(cos(ang) * 0.9, 0.2, sin(ang) * 0.9), gold, 4, 3.0)
 	burst(at + Vector3(0, 1.0, 0), Color("7dff9b"), 20, 5.0)
 	root.pose = "cheer"
+	face_player(p)
+	quip(p, "reborn")
 	var tw := beam.create_tween()
 	tw.tween_property(beam, "scale", Vector3(0.05, 1, 0.05), 0.5)
 	tw.tween_callback(beam.queue_free)
@@ -3014,6 +3166,8 @@ func rope_cross(p: Dictionary) -> void:
 	popup(root.position, "+%d" % (d - from_i), Color("7dff9b"))
 	await hop(root, s.point_at(0.05) - Vector3(0, 1.75, 0), 0.9, 0.42)
 	root.hang = true
+	root.express("happy")
+	popup(root.position + Vector3(0, 1.2, 0), "GOT IT!", Color("7dff9b"))
 	root.rotation = Vector3(0, rope_yaw, 0)
 	s.weigh(0.05, 0.35)  # the rope dips as it takes their weight
 	sfx.play("rope", -4.0)
@@ -3021,12 +3175,15 @@ func rope_cross(p: Dictionary) -> void:
 	await wait(0.5)
 	spot_off()
 	say("%s crossed the rope to slab %d" % [subj(p), d])
-	var dur: float = 0.9 + rope.a.distance_to(rope.b) * 0.08
+	popup(root.position + Vector3(0, 1.2, 0), "WHEEE!", Color("fff3a8"))
+	var dur: float = 1.2 + rope.a.distance_to(rope.b) * 0.09
 	var tw := create_tween()
 	tw.tween_method(_ride.bind(s, root), 0.05, 0.96, dur).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 	await tw.finished
 	root.hang = false
+	root.express("")
 	p.pos = d
+	announce("+%d SLABS" % (d - from_i), Color("7dff9b"))
 	await hop(root, spot(p, d), 0.4, 0.25)
 	root.rotation = Vector3(0, yaws[d], 0)
 	squash(root)
@@ -3034,41 +3191,64 @@ func rope_cross(p: Dictionary) -> void:
 	burst(root.position, Color("52d273"), 16, 4.0)
 
 
+func _fling(t: float, root: Node3D, from: Vector3, to: Vector3, arc: float, yaw: float, c: Color) -> void:
+	# thrown through the air in one long arc, tumbling, leaving a trail
+	root.position = from.lerp(to, t) + Vector3(0, sin(t * PI) * arc, 0)
+	root.rotation = Vector3(-TAU * 2.0 * t, yaw, 0)
+	if Engine.get_frames_drawn() % 3 == 0:
+		burst(root.position + Vector3(0, 0.8, 0), c, 3, 1.5)
+
+
 func snake_strike(p: Dictionary) -> void:
+	# Played in clear beats: the cobra rears and hisses while the runner
+	# shrinks back; it lunges and bites, and holds; then it flings them, and
+	# they sail back down the path in one long arc and land in a heap.
 	var root: Node3D = p.a
 	var i: int = p.pos
 	var d: int = safe_back(p, snake_to[i])
 	var cobra: Node3D = snakes[i].node
 	var local: Vector3 = slabs[i].to_local(root.global_position)
 	say("A cobra threw %s back to slab %d" % [obj(p), d])
-	spotlight(p, 0.45)
+	spotlight(p, 0.5)
 	cobra.wake_to = 1.0
 	cobra.aim = atan2(local.x, local.z + 0.12)  # turn its neck towards the runner
-	sfx.play("snake")
-	await wait(0.6)  # rears, sways, eyes its target
+	sfx.play("snake", 2.0)
+	root.pose = "hit"  # recoils
+	root.express("scared")
+	popup(path[i] + Vector3(0, 0.4, 0), "HSSSS!", Color("b8e04a"))
+	await wait(0.85)
 	var tw := cobra.create_tween()
-	tw.tween_property(cobra, "strike", 1.0, 0.09)
+	tw.tween_property(cobra, "strike", 1.0, 0.1)
 	await tw.finished
-	shake(0.35)
-	sfx.play("bump")
-	await hitstop(0.1)
+	shake(0.4)
+	sfx.play("ko", 0.0, 1.2)
+	popup(root.position, "CHOMP!", Color("ff6b5e"))
+	root.express("pain")
 	burst(root.position + Vector3(0, 1, 0), Color("b8e04a"), 18, 5.0)
-	popup(root.position, "-%d" % (i - d), Color("ff6b5e"))
+	await hitstop(0.12)
+	await wait(0.4)  # the bite holds
+	announce("-%d SLABS" % (i - d), Color("ff6b5e"))
 	wound(p)
-	cobra.create_tween().tween_property(cobra, "strike", 0.0, 0.45)
-	# thrown back: tumbles slab by slab down the path
+	cobra.create_tween().tween_property(cobra, "strike", 0.0, 0.5)
 	spot_off()
+	sfx.play("whoosh", 2.0, 0.6)
+	root.pose = "tuck"
 	root.air = true
-	for k in range(i - 1, d - 1, -1):
-		root.rotation.x -= 1.3
-		await hop(root, spot(p, k), 0.5, 0.075)
-		p.pos = k
-		refresh_ui()
+	var fl := create_tween()
+	fl.tween_method(_fling.bind(root, root.position, spot(p, d), 3.2 + (i - d) * 0.25, yaws[d], Color("b8e04a")), 0.0, 1.0, 1.0 + (i - d) * 0.07)
+	await fl.finished
+	p.pos = d
 	root.air = false
+	root.pose = ""
 	root.rotation = Vector3(0, yaws[d], 0)
 	squash(root)
-	sfx.play("land")
-	burst(root.position, STONE.lightened(0.2), 10, 3.0)
+	shake(0.3)
+	sfx.play("bodyfall", 2.0)
+	burst(root.position, STONE.lightened(0.2), 14, 3.5)
+	stars(root)
+	root.express("ko", 1.3)
+	refresh_ui()
+	await wait(0.7)
 
 
 func crumble(p: Dictionary) -> void:
@@ -3532,16 +3712,23 @@ func fight(p: Dictionary, q: Dictionary) -> void:
 	ln.create_tween().tween_property(ln, "rotation:x", ln.rotation.x - TAU, 0.5)
 	await hop(ln, spot(lose, lose.pos), 1.8, 0.5)
 	spot_off()
-	wn.pose = "cheer"
-	wn.express("happy", 1.4)
+	face_player(win)
+	wn.pose = "thumb"
+	wn.express("happy", 1.6)
+	quip(win, "win_fight")
 	ln.pose = ""
 	ln.rotation = Vector3(0, yaws[lose.pos], 0)
 	squash(ln)
 	sfx.play("bodyfall", 0.0)
 	stars(ln)
+	face_player(lose)
+	ln.pose = "sad"
 	say("%s won the fight" % subj(win))
 	await wait(0.6)
+	quip(lose, "lose_fight")
+	await wait(0.7)
 	wn.pose = ""
+	ln.pose = ""
 	wn.position = homes[wn]
 	wn.rotation = Vector3(0, yaws[win.pos], 0)
 	var landed: int = lose.pos
@@ -3551,49 +3738,47 @@ func fight(p: Dictionary, q: Dictionary) -> void:
 
 
 func boulder_turn() -> void:
-	# The boulder chases whoever is last. It is never a surprise: when it is
-	# anywhere near, the camera swings round to watch it roll, and it must
-	# catch a runner twice running (a close call, then the crush) to kill.
+	# The boulder has its own turn at the end of every round, announced like a
+	# player's. One rule: it rolls forward a few slabs, chasing whoever is
+	# last, and any runner it reaches loses a life and is knocked on ahead of
+	# it. It never rolls backwards and never kills outright.
+	if round_no < 4:  # it sleeps while everyone leaves the start
+		if round_no == 3:
+			show_card("", "THE BOULDER WAKES", "It chases whoever is last. If it hits you, you lose a life", Color("ff9a2e"), 2.2)
+			sfx.play("boulder", -4.0)
+			shake(0.3)
+			await wait(2.2)
+		return
+	for p in players:  # nobody may be at or behind it
+		if active(p) and p.pos <= bo + 1:
+			focus_p = p
+			p.pos = mini(bo + 3, END - 1)
+			say("%s scrambled clear of the boulder" % subj(p))
+			await hop(p.a, spot(p, p.pos), 1.4, 0.5)
+			p.a.rotation = Vector3(0, yaws[p.pos], 0)
+			refresh_ui()
 	var last: Dictionary = {}
 	for p in players:
 		if active(p) and (last.is_empty() or p.pos < last.pos):
 			last = p
 	if last.is_empty():
 		return
-	if round_no < 4:  # grace: boulder sleeps while everyone leaves the start
-		if round_no == 3:
-			say("The boulder is waking up...")
-			await wait(0.8)
-		return
-	# The boulder only ever rolls forward. A runner who has somehow ended up at
-	# or behind it scrambles clear to just ahead of it instead.
-	for p in players:
-		if active(p) and p.pos <= bo + 1:
-			focus_p = p
-			p.pos = mini(bo + 3, END - 1)
-			p.danger = false
-			say("%s scrambled clear of the boulder" % subj(p))
-			await hop(p.a, spot(p, p.pos), 1.4, 0.5)
-			p.a.rotation = Vector3(0, yaws[p.pos], 0)
-			refresh_ui()
-	last = {}
-	for p in players:
-		if active(p) and (last.is_empty() or p.pos < last.pos):
-			last = p
 	focus_p = last
 	var speed := mini(2 + round_no / 6, 4)
 	if last.pos - bo > 12:
 		speed += 2
 	var from_i := bo
-	var caught: bool = bo + speed >= last.pos
-	var crushed: bool = caught and last.danger
-	if crushed:
-		bo = maxi(bo, last.pos)
-	elif caught:
-		bo = maxi(bo, last.pos - 3)
+	var target := mini(bo + speed, END - 2)
+	var victims: Array[Dictionary] = []
+	for p in players:
+		if active(p) and p.pos <= target:
+			victims.append(p)
+	var near: bool = last.pos - target <= 9
+	var who: String = "YOU" if not last.bot else last.name
+	if victims.is_empty():
+		show_card("", "BOULDER ROLLS %d" % speed, "It will be %d slabs behind %s" % [last.pos - target, who], Color("ff9a2e"), 1.3)
 	else:
-		bo += speed
-	var near: bool = last.pos - bo <= 9
+		show_card("", "BOULDER ROLLS %d" % speed, "It reaches %s!" % who, Color("ff5a4a"), 1.5)
 	if near:  # look back down the path at it
 		var i: int = clampi(last.pos, 0, END)
 		in_cine = true
@@ -3601,49 +3786,49 @@ func boulder_turn() -> void:
 		cine_target = boulder
 		cine_pos = last.a.position + dirs[i] * 5.5 + dirs[i].cross(Vector3.UP) * 2.6 + Vector3(0, 4.2, 0)
 		cine_look_now = last.a.position + Vector3(0, 1.0, 0)
-		announce("BOULDER!", Color("ff9a2e"))
 		last.a.express("scared")
 		last.a.turn_to(yaws[i] + PI)  # the runner looks back at it
-		await wait(0.55)
+		quip(last, "boulder")
+		await wait(0.7)
 	shake(0.2)
 	sfx.play("boulder")
-	var dur := 0.7 + (0.5 if near else 0.0)
+	bo = target
 	var tw := create_tween()
 	tw.tween_method(func(f: float) -> void:
 		var a := floori(f)
 		boulder.position = slab_pos(a).lerp(slab_pos(a + 1), f - a) + Vector3(0, 1.25, 0)
 		if near and Engine.get_frames_drawn() % 4 == 0:
-			burst(boulder.position - Vector3(0, 1.1, 0), Color("b3ada1"), 3, 2.5), float(from_i), float(bo), dur)
+			burst(boulder.position - Vector3(0, 1.1, 0), Color("b3ada1"), 3, 2.5), float(from_i), float(bo), 0.7 + (0.5 if near else 0.0))
 	await tw.finished
 	burst(boulder.position - Vector3(0, 1.2, 0), Color("8a8478"), 14, 4.0)
-	for p in players:
-		p.danger = false
-	if crushed and last.banana > 0:  # snatched from under the boulder
-		_end_watch(last)
-		await banana_rescue(last)
-	elif crushed:
-		last.a.scale = Vector3(1.3, 0.12, 1.3)
-		last.a.express("ko")
-		shake(0.7)
+	for v in victims:
+		var root: Node3D = v.a
+		focus_p = v
+		shake(0.6)
 		sfx.play("crush")
 		await hitstop(0.12)
-		burst(boulder.position, last.color, 30, 7.0)
-		say("The boulder crushed %s!" % obj(last))
-		await wait(0.9)
-		_end_watch(last)
-		last.hearts = 0
-		await lose_all(last, mini(bo + 3, END - 1))
-	elif caught:
-		last.danger = true  # only a close call arms the crush
-		shake(0.4)
-		sfx.play("bad", -4.0)
-		popup(last.a.position, "CLOSE!", Color("ff6b5e"))
-		show_card("", "CLOSE CALL!", "%s must get clear, or be crushed next time" % ("YOU" if not last.bot else last.name), Color("ff5a4a"), 1.4)
-		say("Close call for %s! Boulder right behind" % obj(last))
-		await wait(0.9)
-	else:
-		say("Boulder is %d slabs behind %s" % [last.pos - bo, obj(last)])
+		burst(root.position + Vector3(0, 0.8, 0), v.color, 26, 7.0)
+		say("The boulder hit %s!" % obj(v))
+		var was: int = v.pos
+		var res: String = await hurt(v)
+		if active(v) and v.pos == was:  # still there: bowled along and out in front of it
+			v.pos = mini(bo + 3, END - 1)
+			root.air = true
+			root.pose = "tuck"
+			root.create_tween().tween_property(root, "rotation:x", -TAU, 0.7)
+			await hop(root, spot(v, v.pos), 2.4, 0.7)
+			root.air = false
+			root.pose = ""
+			root.rotation = Vector3(0, yaws[v.pos], 0)
+			squash(root)
+			sfx.play("bodyfall")
+			stars(root)
+			if res == "hit":
+				quip(v, "boulder_hit")
+			await wait(0.6)
 	_end_watch(last)
+	if victims.is_empty():
+		say("Boulder is %d slabs behind %s" % [last.pos - bo, obj(last)])
 	refresh_ui()
 	await wait(0.6)
 
@@ -3809,7 +3994,7 @@ func menu(page: String) -> void:
 			logo.texture = load("res://ui/logo.png")
 			logo.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 			logo.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-			logo.custom_minimum_size = Vector2(0, 430)
+			logo.custom_minimum_size = Vector2(0, 340)
 			logo.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			col.add_child(logo)
 		else:
@@ -3829,6 +4014,11 @@ func menu(page: String) -> void:
 			var mp := menu_button(v, "MULTIPLAYER", wood, menu.bind("main"), false)
 			mp.draw.connect(_draw_soon.bind(mp))
 			menu_button(v, "POWER-UPS", wood, menu.bind("shop"))
+			var sup := menu_button(v, "SUPPORT ME", green, open_support, true, 34)
+			sup.custom_minimum_size = Vector2(0, 92)
+			sup.draw.connect(func() -> void:  # a heart either side of the words
+				for hx in [70.0, sup.size.x - 104.0]:
+					_icon(sup, "heart", Vector2(hx, sup.size.y / 2.0 - 22.0), 34, Color("e2463a")))
 			icon_button(_draw_gear, menu.bind("settings"), true)
 			icon_button(_draw_help, menu.bind("help"), false)
 			icon_button(_draw_trophy, menu.bind("ranks"), true, 1)
@@ -3853,7 +4043,7 @@ func menu(page: String) -> void:
 			icon_button(_draw_back, menu.bind("main"), false)
 		"help":
 			title(v, "HOW TO PLAY", 50, GOLD)
-			title(v, "Roll the die. First to the temple gate wins. Stay ahead of the boulder.", 22, cream)
+			title(v, "Roll the die. First to the temple gate wins. The boulder chases whoever is last: if it hits you, you lose a life.", 22, cream)
 			var rules := [["s_rope", "ROPE", "Swing far ahead"], ["s_snake", "COBRA", "Thrown far back"], ["s_tiger", "TIGER", "Eyes in the bush: lose a life, flee back 4"], ["s_spike", "SPIKES", "Tap in time to jump, or lose a life"], ["s_crumble", "CRACKED SLAB", "You fall and lose a life"], ["s_mystery", "MYSTERY", "An animal or a treasure chest"], ["heart", "3 LIVES", "Lose them all: use a respawn"], ["heart_empty", "WOUNDED", "After any hit: weaker in fights for 2 turns"], ["ankh", "2 RESPAWNS", "None left: you are out"], ["banana", "BANANA (RARE)", "A gorilla carries you clear of a fatal hit"]]
 			for g in rules:
 				var line := HBoxContainer.new()
@@ -3934,6 +4124,12 @@ func menu(page: String) -> void:
 			menu_button(v, "FOLLOW THE TURN", green if view_mode == "turn" else wood, set_view.bind("turn"), true, 32)
 			menu_button(v, "STAY ON MY PLAYER", green if view_mode == "mine" else wood, set_view.bind("mine"), true, 32)
 			title(v, "A gold arrow always marks whose turn it is", 20, cream)
+			title(v, "YOUR CHARACTER", 28, cream)
+			var who_row := HBoxContainer.new()
+			who_row.add_theme_constant_override("separation", 14)
+			v.add_child(who_row)
+			menu_button(who_row, "MALE", green if not female else wood, set_female.bind(false), true, 30).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			menu_button(who_row, "FEMALE", green if female else wood, set_female.bind(true), true, 30).size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			title(v, "SOUND", 28, cream)
 			menu_button(v, "ON" if sound_on else "OFF", green if sound_on else wood, toggle_sound, true, 36)
 			icon_button(_draw_back, menu.bind("main"), false)
@@ -4002,6 +4198,17 @@ func set_view(mode: String) -> void:
 	menu("settings")
 
 
+func set_female(on: bool) -> void:
+	female = on
+	save_settings()
+	prepare_world()  # rebuild so the runner behind the menu is the one chosen
+	menu("settings")
+
+
+func open_support() -> void:
+	OS.shell_open(SUPPORT_URL)
+
+
 func toggle_sound() -> void:
 	sound_on = not sound_on
 	AudioServer.set_bus_mute(0, not sound_on)
@@ -4010,9 +4217,12 @@ func toggle_sound() -> void:
 
 
 func save_settings() -> void:
+	if autoplay or OS.has_environment("VAULT_NOSAVE"):  # test runs never touch the player's save
+		return
 	var cf := ConfigFile.new()
 	cf.set_value("game", "view", view_mode)
 	cf.set_value("game", "sound", sound_on)
+	cf.set_value("game", "female", female)
 	cf.set_value("game", "wallet", wallet)
 	cf.set_value("game", "records", records)
 	cf.set_value("game", "stats", stats)
@@ -4024,6 +4234,7 @@ func load_settings() -> void:
 	if cf.load("user://settings.cfg") == OK:
 		view_mode = cf.get_value("game", "view", "turn")
 		sound_on = cf.get_value("game", "sound", true)
+		female = cf.get_value("game", "female", false)
 		wallet = cf.get_value("game", "wallet", 0)
 		records = cf.get_value("game", "records", [])
 		stats = cf.get_value("game", "stats", {"races": 0, "wins": 0})
@@ -4032,12 +4243,16 @@ func load_settings() -> void:
 
 func game_over(me: Dictionary) -> void:
 	# Results board: headline, standings, then play again or back to the lobby.
+	if results.visible:  # already shown
+		return
 	set_die(0)
 	clear_buttons()
 	refresh_ui()
 	for n in [die, lbl_hint, turn_bar]:
 		n.visible = false
 	var place := finished.find(me) + 1
+	if place == 0 and not me.out:  # the others finished first: placed by how far you got
+		place = standings().get(me.name, players.size())
 	var head := "OUT AT SLAB %d" % me.pos
 	var head_c := Color("ff6b5e")
 	if place == 1:
@@ -4164,6 +4379,19 @@ func _process(delta: float) -> void:
 					else:
 						sfx.play("coin", -16.0, 0.7)
 				break
+	# the speech bubble stays over its speaker's head
+	if bubble.visible:
+		if clock > bubble_until or not is_instance_valid(bubble_who) or not bubble_who.visible:
+			bubble.visible = false
+		else:
+			var head_at: Vector3 = bubble_who.global_position + Vector3(0, 2.45, 0)
+			if cam.is_position_behind(head_at):
+				bubble.visible = false
+			else:
+				var vis := get_viewport().get_visible_rect().size
+				var at := cam.unproject_position(head_at) * (vis / Vector2(view.size))
+				bubble.position = Vector2(clampf(at.x - bubble.size.x / 2.0, 8.0, vis.x - bubble.size.x - 8.0), maxf(at.y - bubble.size.y - 26.0, 8.0))
+				bubble.queue_redraw()
 	# race-bar pins glide towards where their runners are
 	var gliding := false
 	for p in players:
