@@ -19,17 +19,26 @@ Open the folder in Godot 4.7 and press Play, or from a terminal:
 ## How it plays
 
 - Roll the die (tap anywhere). You have 8 seconds, or the turn is lost.
+- After the roll you see where it leads. Tap to move, or spend coins first:
+  reroll (3), run 3 further (5), shield (5), life (10). Coins are kept
+  between races.
 - Special slabs: rope (swing ahead), cobra (thrown back), tiger ambush,
-  spikes (tap in time to jump), cracked slab, and "?" (an animal or a chest).
+  spikes, cracked slab, and "?" (an animal or a chest).
+- Obstacles on the path need a timed input: spikes, log, wall, low beam and
+  swinging blade. Tap controls: one tap. Swipe controls (Settings): up to
+  jump, down to slide, sideways to dodge. Missing a hurdle ends your move;
+  missing spikes costs a life.
+- A setback never throws you more than 6 slabs, or past the last torch.
 - 3 lives. Lose them all and you spend a respawn at the last torch. No
   respawns left and you are out.
 - After any hit you are wounded for 2 of your own turns, and fight worse.
-- Land on an occupied slab and you fight for it. The newcomer has the edge,
-  but can lose.
-- Coins: 10 buy a life. Chests can hold a shield, a life or a respawn.
+- Land on an occupied slab and you choose: fight for it, or share it. The
+  newcomer has the edge, but can lose.
+- Chests can hold a shield, a life or a respawn.
 
-Play against 1 to 5 bots. Online multiplayer and the power-up shop are
-planned, and shown as "soon" in the lobby.
+Play against 1 to 5 bots, on a path of 50 to 80 slabs (picked with the
+rivals; the lobby shows the expected race time). Bots take their turns
+faster than you do. Online multiplayer is planned.
 
 ## Play in a browser
 
@@ -80,6 +89,8 @@ Environment variables for testing:
 | `VAULT_SHOT=file` | Save a screenshot after `VAULT_SHOT_AT` seconds (default 3) and quit |
 | `VAULT_SAFE=top,bottom` | Preview a notch / home-bar inset on desktop |
 | `VAULT_GFX=0`, `1` or `2` | Force the graphics level: low, medium, high |
+| `VAULT_LEN=n` | Force the path length (20 to 80 slabs) |
+| `VAULT_HURDLE=kind` | Every hurdle is this kind: `log`, `block`, `beam`, `blade` |
 | `VAULT_NOSAVE=1` | Never write settings or the leaderboard (always on with autoplay) |
 | `VAULT_ZOO=a,b` | Line animals up for inspection: `monkey`, `gorilla`, `tiger`, `elephant`, `cobra` |
 

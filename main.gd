@@ -11,7 +11,7 @@ const Nature := preload("res://nature.gd")
 const Sfx := preload("res://sfx.gd")
 const Strand := preload("res://strand.gd")
 
-const END := 80          # treasure slab
+var END := 80            # treasure slab: set from path_len at the start of each race
 const GAP := 2.4         # distance between slab centres
 const JUMP_WINDOW := 0.9 # seconds to tap for a spike jump
 const HARMFUL := ["spike", "crumble", "snake", "tiger"]
@@ -38,6 +38,8 @@ const LINES := {
 	"overtaken": ["Hey! Get back here, %s!", "That spot was MINE, %s!", "Not for long, %s!", "I will remember that, %s!"],
 	"rival_won": ["Nooo! %s got the gold!", "Well run, %s. Well run.", "Next time, %s. Next time.", "Fine. Congratulations, %s."],
 	"fight_reply": ["You and what army?", "Bring it on!", "I was here first!", "Try me!", "Oh, it is ON!"],
+	"share": ["Room for two?", "Just passing through!", "No trouble today.", "Easy... we can share."],
+	"trip": ["Oof! Did not see that.", "Who put that there?!", "My shin!", "Clumsy me..."],
 	"start": ["Last one there is tiger food!", "Treasure, here we come!", "Try to keep up!", "May the best explorer win. Me.", "Nobody touch my gold!"],
 	"rope": ["Yes! A rope! Let's go!", "A rope! My lucky day!", "Shortcut! Hold tight!", "Finally, some luck!", "Going up! See you later!", "I love ropes. Ropes love me."],
 	"rope_done": ["Easy as that!", "Did you see that swing?!", "And they said I skipped arm day.", "Shortcut taken. Thank you, rope."],
@@ -82,6 +84,7 @@ const LINES := {
 	"rain": ["Rain. Of course it is raining.", "My hat is soaked.", "Slippery slabs. Lovely."],
 	"win": ["I did it! The treasure!", "Gold! Glorious gold!", "Champion of the jungle!", "Told you I would win!"],
 }
+const COST := {"reroll": 3, "sprint": 5, "shield": 5, "life": 10}  # coin prices of the turn powers
 const HEAL_TURNS := 2     # own turns a wound takes to heal; wounded runners fight worse
 const ROLL_TIME := 8.0   # seconds a player has to roll before the turn is lost
 const PIXEL := 2          # 3D is rendered at 1/PIXEL resolution for the pixel-art look
@@ -257,7 +260,22 @@ var cine_look := Vector3.ZERO
 var stopping := false      # inside a hit-stop freeze
 var records: Array = []    # best races, highest score first: {score, place, coins, rounds, bots, date}
 var stats := {"races": 0, "wins": 0}
-var wallet := 0           # coins banked across games, for the power-up shop
+var wallet := 0           # coins banked across games: turn powers are paid from race coins first, then from here
+var path_len := 80        # slabs to the treasure (setting: 50..80)
+var controls := "tap"     # "tap": one tap clears any obstacle. "swipe": up, down or sideways, to match it
+var turn_speed := 1.0     # bots' turns run faster than yours
+var gesture := ""         # the player's last input during a timed prompt: tap / up / down / left / right
+var touch_at := Vector2.ZERO
+var touching := false
+var power_tap := -9.0     # when a HUD button was last pressed, so that tap does not also roll or move
+var choosing := false     # the after-roll decision is open: a tap anywhere means "go"
+var go_now := false
+var choice := ""
+var pow_row: HBoxContainer  # decision buttons (coin powers, fight or pass), above the die
+var prompt: Control       # the big arrow that says which way to swipe
+var prompt_dir := ""
+var prompt_text := ""
+var swingers: Array[Node3D] = []  # pendulum blades
 var me_bar: Control       # the human player's own hearts, coins, respawns, shield
 var reward_root: Control  # full-screen reward reveal
 var reward_rays: Control
@@ -486,7 +504,7 @@ func hitstop(sec := 0.07) -> void:
 	if dead or not is_inside_tree():
 		await never
 	stopping = false
-	Engine.time_scale = slow_now
+	Engine.time_scale = slow_now * turn_speed
 
 
 func spotlight(p: Dictionary, slow := 0.45, side := 1.9) -> void:
@@ -987,11 +1005,26 @@ func make_slab(i: int, kind: String) -> Node3D:
 	num.position = Vector3(0, 0.27, 0)  # centred on the tile
 	root.add_child(num)
 
-	if kind == "" and i > 5 and i < END - 1 and i % 5 != 0 and rng.randf() < 0.24:
-		# parkour hurdle on the near edge: runners vault or flip the low ones and slide under the beam
-		var h: String = ["log", "block", "beam"][rng.randi_range(0, 2)]
+	if kind == "" and i > 5 and i < END - 1 and i % 5 != 0 and rng.randf() < 0.6 \
+			and dirs[i - 1].is_equal_approx(dirs[i]) and absf(path[i].y - path[i - 1].y) < 0.4 and not hurdles.has(i - 1):
+		# parkour hurdle on the near edge, only where the approach is straight and level,
+		# so the move lines up with it: vault the log, flip the wall, slide under the beam, dodge the blade
+		var h: String = ["log", "block", "beam", "blade"][rng.randi_range(0, 3)]
+		if OS.has_environment("VAULT_HURDLE"):
+			h = OS.get_environment("VAULT_HURDLE")
 		hurdles[i] = h
 		match h:
+			"blade":  # a frame with a blade swinging across the path: spin through
+				for side in [-1, 1]:
+					box(root, Vector3(0.26, 2.7, 0.26), Vector3(side * 1.12, 1.6, 0.8), Color("6b4a2c"))
+				box(root, Vector3(2.6, 0.3, 0.3), Vector3(0, 2.95, 0.8), Color("8a6a44"))
+				var arm := Node3D.new()
+				arm.position = Vector3(0, 2.85, 0.8)
+				root.add_child(arm)
+				box(arm, Vector3(0.1, 1.5, 0.1), Vector3(0, -0.75, 0), Color("3b4038"))
+				box(arm, Vector3(0.8, 0.5, 0.1), Vector3(0, -1.7, 0), Color("d9dde2"))
+				box(arm, Vector3(0.8, 0.12, 0.12), Vector3(0, -1.98, 0), Color("ff5a4a")).material_override = mat(Color("ff5a4a"), true)
+				swingers.append(arm)
 			"log":  # a fat fallen trunk across the path, on two stones: vault it
 				box(root, Vector3(2.3, 0.6, 0.6), Vector3(0, 0.62, 0.8), shade(Color("6b4a2c")))
 				for e in [-1.0, 1.0]:
@@ -1641,6 +1674,25 @@ func _build_ui() -> void:
 	lbl_hint.add_theme_font_size_override("font_size", 34)
 	lbl_hint.visible = false
 	safe.add_child(lbl_hint)
+	pow_row = HBoxContainer.new()
+	pow_row.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
+	pow_row.offset_left = 18
+	pow_row.offset_right = -18
+	pow_row.offset_top = -500
+	pow_row.offset_bottom = -372
+	pow_row.add_theme_constant_override("separation", 10)
+	pow_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	safe.add_child(pow_row)
+	prompt = Control.new()
+	prompt.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	prompt.offset_left = -170
+	prompt.offset_right = 170
+	prompt.offset_top = 40
+	prompt.offset_bottom = 310
+	prompt.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	prompt.visible = false
+	prompt.draw.connect(_draw_prompt)
+	safe.add_child(prompt)
 
 	lbl_note = _label(22)  # weather and time notices
 	lbl_note.add_theme_color_override("font_color", Color("fff3c4"))
@@ -2073,8 +2125,8 @@ func _draw_me() -> void:
 	for h in maxi(3, p.hearts):
 		_icon(c, "heart" if h < p.hearts else "heart_empty", Vector2(14 + h * 40.0, 12), 40, Color("e2463a") if h < p.hearts else Color("5a4636"))
 	_icon(c, "coin", Vector2(14, 62), 38, GOLD)
-	c.draw_string_outline(ui_font, Vector2(58, 94), str(p.coins), HORIZONTAL_ALIGNMENT_LEFT, -1, 32, 6, Color("2a2118"))
-	c.draw_string(ui_font, Vector2(58, 94), str(p.coins), HORIZONTAL_ALIGNMENT_LEFT, -1, 32, Color("fff8e1"))
+	c.draw_string_outline(ui_font, Vector2(58, 94), str(purse(p)), HORIZONTAL_ALIGNMENT_LEFT, -1, 32, 6, Color("2a2118"))
+	c.draw_string(ui_font, Vector2(58, 94), str(purse(p)), HORIZONTAL_ALIGNMENT_LEFT, -1, 32, Color("fff8e1"))
 	for r in p.revives:
 		_icon(c, "ankh", Vector2(124 + r * 36.0, 62), 40, Color("5fe0ff"))
 	if p.shield:
@@ -2155,7 +2207,8 @@ func _draw_track() -> void:
 	if lead > 0.2:
 		track.draw_style_box(_round(Color(1.0, 0.82, 0.3, 0.55), 5), Rect2(x0 - 8, y - 4, lead / END * w + 8, 8))
 	for t in [20, 40, 60]:
-		track.draw_rect(Rect2(x0 + float(t) / END * w - 1, y - 6, 2, 12), Color(1, 0.95, 0.75, 0.4))
+		if t < END:
+			track.draw_rect(Rect2(x0 + float(t) / END * w - 1, y - 6, 2, 12), Color(1, 0.95, 0.75, 0.4))
 	_icon(track, "trophy", Vector2(track.size.x - 40, y - 22), 40, GOLD)
 	var bx := clampf(pin_bo / END, 0.0, 1.0) * w + x0
 	track.draw_circle(Vector2(bx, y), 12, dark)
@@ -2212,18 +2265,21 @@ func set_die(v: int, pop := false) -> void:
 
 
 func clear_buttons() -> void:
-	for c in btn_row.get_children():
+	for c in btn_row.get_children() + pow_row.get_children():
 		c.queue_free()
 
 
-func add_button(text: String, c: Color, cb: Callable) -> void:
+func add_button(text: String, c: Color, cb: Callable, size := 46) -> void:
+	# small sizes are decision buttons and go in their own row above the die
 	var b := Button.new()
 	b.text = text
+	b.action_mode = BaseButton.ACTION_MODE_BUTTON_PRESS
+	b.pressed.connect(func() -> void: power_tap = clock)
 	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	b.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	b.add_theme_font_override("font", ui_font)
-	b.add_theme_font_size_override("font_size", 46)
-	b.add_theme_constant_override("outline_size", 12)
+	b.add_theme_font_size_override("font_size", size)
+	b.add_theme_constant_override("outline_size", 12 if size > 30 else 8)
 	b.add_theme_color_override("font_outline_color", Color("2a2118"))
 	for n in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color"]:
 		b.add_theme_color_override(n, Color("fff8e1"))
@@ -2233,7 +2289,7 @@ func add_button(text: String, c: Color, cb: Callable) -> void:
 	b.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
 	b.pressed.connect(func() -> void: sfx.play("step"))
 	b.pressed.connect(cb)
-	btn_row.add_child(b)
+	(btn_row if size > 40 else pow_row).add_child(b)
 
 
 func refresh_ui(current: Dictionary = {}) -> void:
@@ -2278,6 +2334,11 @@ func place_die(big: bool) -> void:
 func prepare_world() -> void:
 	bo = -6
 	round_no = 0
+	turn_speed = 1.0
+	END = path_len
+	if OS.has_environment("VAULT_LEN"):
+		END = clampi(int(OS.get_environment("VAULT_LEN")), 20, 80)
+	swingers.clear()
 	style = STYLES[rng.randi_range(0, STYLES.size() - 1)]
 	tod = [0.03, 0.2, 0.4, 0.66][rng.randi_range(0, 3)]  # start at dawn, noon, late day or dusk
 	rain = rng.randf() < 0.3
@@ -2368,29 +2429,57 @@ func take_turn(p: Dictionary) -> void:
 		elif behind == 0 and ahead > 0 and p.pos > 4:
 			quip(p, "last")
 	var again := true
+	turn_speed = 1.5 if is_bot(p) else 1.0  # rivals' turns run quicker: less watching, more playing
 	while again and active(p):
 		again = false
 		refresh_ui(p)
 		var n: int = await roll(p)
 		if n == 0:
 			break
-		var steps := n
 		var lead := 0
 		for q in players:
 			if active(q) or q.done:
 				lead = maxi(lead, q.pos)
 		var gap: int = lead - p.pos
-		var boost := 3 if gap >= 26 else (2 if gap >= 14 else 0)
+		var boost := 3 if gap >= END * 0.32 else (2 if gap >= END * 0.18 else 0)
 		if boost > 0:  # runners far behind get a tailwind, so the race stays a race
-			steps += boost
 			popup(p.a.position, "TAILWIND +%d" % boost, Color("5fe0ff"))
 			burst(p.a.position + Vector3(0, 1, 0), Color("5fe0ff"), 12, 4.0)
 			sfx.play("good", -8.0, 1.3)
 			quip(p, "tailwind", 0.6)
-		var spoke: bool = await react(p, n, steps)
+		var steps := n + boost
 		var from_pos: int = p.pos
-		var trail := show_trail(p, steps)
-		await wait(preview(p, steps, spoke))
+		var trail: Node3D
+		if is_bot(p):
+			if is_bad(p, steps) and p.coins >= COST.reroll and rng.randf() < 0.7:  # a bot buys its way out too
+				pay(p, COST.reroll)
+				popup(p.a.position, "REROLL!", Color("5fe0ff"))
+				n = await roll(p, true)
+				steps = n + boost
+			trail = show_trail(p, steps)
+			await wait(minf(preview(p, steps), 0.8))
+		else:
+			# Your decision: after the roll you see where it leads, then tap to go,
+			# or spend coins to roll again, run 3 further, or protect yourself.
+			var sprinted := false
+			var fresh := true
+			while true:
+				var spoke := false
+				if fresh:
+					spoke = await react(p, n, steps)
+				fresh = false
+				trail = show_trail(p, steps)
+				var pick: String = await choose(p, preview(p, steps, spoke), sprinted)
+				if pick == "go":
+					break
+				trail.queue_free()
+				if pick == "reroll":
+					n = await roll(p, true)
+					steps = n + boost + (3 if sprinted else 0)
+					fresh = true
+				else:
+					sprinted = true
+					steps += 3
 		p.a.express("")
 		await move(p, steps)
 		if active(p) and p.pos > from_pos and not (kinds[p.pos] in HARMFUL):  # anyone passed on the way hears about it, and answers back
@@ -2410,7 +2499,162 @@ func take_turn(p: Dictionary) -> void:
 			await wait(0.5)
 	set_die(0)
 	spot_off()
-	await wait(1.0)  # hold on this runner so the result can sink in before the camera moves on
+	await wait(0.6 if is_bot(p) else 1.0)  # hold on this runner so the result can sink in before the camera moves on
+	turn_speed = 1.0
+
+
+func is_bad(p: Dictionary, steps: int) -> bool:
+	var dest := mini(p.pos + steps, END)
+	return kinds[dest] in HARMFUL and not p.hit.has(dest)
+
+
+func purse(p: Dictionary) -> int:
+	# coins a runner can spend: this race's, and for you also the bank from earlier games
+	return p.coins + (0 if is_bot(p) else wallet)
+
+
+func pay(p: Dictionary, n: int) -> void:
+	var here: int = mini(p.coins, n)
+	p.coins -= here
+	if not is_bot(p):
+		wallet -= n - here
+		save_settings()
+	sfx.play("coin", -2.0, 0.8)
+	refresh_ui()
+
+
+func choose(p: Dictionary, hold: float, sprinted: bool) -> String:
+	# Returns "go", "reroll" or "sprint". Shield and life are bought on the spot
+	# and the choice stays open. With no coins to spend it is just the usual pause.
+	if purse(p) < COST.reroll:
+		await wait(hold)
+		return "go"
+	choosing = true
+	go_now = false
+	choice = ""
+	var asked := -1
+	var left := 6.0
+	lbl_hint.text = "TAP TO MOVE  -  OR SPEND COINS (%d)" % purse(p)
+	say("Tap to move, or spend coins first")
+	lbl_hint.visible = true
+	turn_bar.visible = true
+	while left > 0.0 and not go_now:
+		if asked != purse(p):  # (re)build the buttons for what can be afforded now
+			asked = purse(p)
+			clear_buttons()
+			lbl_hint.text = "TAP TO MOVE  -  OR SPEND COINS (%d)" % asked
+			add_button("REROLL\n%d" % COST.reroll, Color("3f7fe0"), func() -> void: choice = "reroll", 30)
+			if not sprinted and asked >= COST.sprint and p.pos + 4 < END:
+				add_button("RUN +3\n%d" % COST.sprint, Color("ee8a1c"), func() -> void: choice = "sprint", 30)
+			if not p.shield and asked >= COST.shield:
+				add_button("SHIELD\n%d" % COST.shield, Color("2f9aa8"), func() -> void: choice = "shield", 30)
+			if p.hearts < 5 and asked >= COST.life:
+				add_button("LIFE\n%d" % COST.life, Color("c0392b"), func() -> void: choice = "life", 30)
+		await frame()
+		left -= get_process_delta_time()
+		set_meter(turn_bar, left / 6.0)
+		if choice == "shield":
+			pay(p, COST.shield)
+			p.shield = true
+			popup(p.a.position, "SHIELD UP", Color("5fe0ff"))
+			burst(p.a.position + Vector3(0, 1, 0), Color("5fe0ff"), 14, 4.0)
+		elif choice == "life":
+			pay(p, COST.life)
+			p.hearts += 1
+			popup(p.a.position, "+1 LIFE", Color("7dff9b"))
+			burst(p.a.position + Vector3(0, 1, 0), Color("7dff9b"), 14, 4.0)
+		elif choice != "":
+			break
+		choice = ""
+	choosing = false
+	clear_buttons()
+	lbl_hint.visible = false
+	lbl_hint.text = "TAP ANYWHERE TO ROLL"
+	turn_bar.visible = false
+	if choice == "reroll":
+		pay(p, COST.reroll)
+		popup(p.a.position, "REROLL!", Color("5fe0ff"))
+		return "reroll"
+	if choice == "sprint":
+		pay(p, COST.sprint)
+		popup(p.a.position, "RUN +3!", Color("ffb347"))
+		burst(p.a.position + Vector3(0, 1, 0), Color("ffb347"), 12, 4.0)
+		return "sprint"
+	return "go"
+
+
+func ask_move(want: String, what: String) -> bool:
+	# A timed input from the player. Tap controls: any tap. Swipe controls: a
+	# swipe the right way ("up", "down", or "side" for left or right); a wrong
+	# swipe fails, a plain tap is ignored.
+	var swipe := controls == "swipe"
+	gesture = ""
+	jump_open = true
+	die.visible = false
+	prompt_dir = want if swipe else "tap"
+	prompt_text = what
+	prompt.visible = true
+	say("%s  %s" % [what, {"up": "SWIPE UP", "down": "SWIPE DOWN", "side": "SWIPE SIDEWAYS"}[want] if swipe else "TAP!"])
+	jump_bar.modulate.a = 1.0
+	var window := JUMP_WINDOW + (0.4 if swipe else 0.0)
+	var ok := false
+	var t := 0.0
+	while t < window:
+		await frame()
+		t += get_process_delta_time()
+		set_meter(jump_bar, 1.0 - t / window)
+		if gesture == "":
+			continue
+		if not swipe:
+			ok = true
+			break
+		if gesture == "tap":
+			gesture = ""
+			continue
+		ok = gesture == want or (want == "side" and gesture in ["left", "right"])
+		break
+	jump_open = false
+	die.visible = true
+	jump_bar.modulate.a = 0.0
+	prompt.visible = false
+	return ok
+
+
+func _draw_prompt() -> void:
+	var c := prompt
+	c.draw_style_box(_round(Color(0.1, 0.07, 0.05, 0.86), 26, 6, Color("ffd76a")), Rect2(Vector2.ZERO, c.size))
+	var mid := Vector2(c.size.x / 2.0, 112)
+	var bob := absf(sin(clock * 9.0)) * 16.0
+	var gold := Color("ffe066")
+	var dark := Color("2a2118")
+	var arrow := [Vector2(0, -66), Vector2(58, -4), Vector2(24, -4), Vector2(24, 58), Vector2(-24, 58), Vector2(-24, -4), Vector2(-58, -4)]
+	var turns: Array = {"up": [0.0], "down": [PI], "side": [PI / 2.0, -PI / 2.0]}.get(prompt_dir, [])
+	for ang in turns:
+		var size := 1.0 if turns.size() == 1 else 0.62
+		var push := Vector2(0, -1).rotated(ang) * (bob + (58.0 if turns.size() > 1 else 0.0))
+		for pass_k in 2:  # dark rim, then the arrow
+			var pts := PackedVector2Array()
+			for a in arrow:
+				pts.append((a * (size * (1.12 if pass_k == 0 else 1.0))).rotated(ang) + mid + push)
+			c.draw_colored_polygon(pts, dark if pass_k == 0 else gold)
+	if turns.is_empty():  # tap: a pulsing ring
+		c.draw_circle(mid, 58 + bob * 0.5, dark)
+		c.draw_circle(mid, 52 + bob * 0.5, gold)
+		c.draw_circle(mid, 30, dark)
+	var words: String = {"up": "SWIPE UP", "down": "SWIPE DOWN", "side": "SWIPE SIDEWAYS", "tap": "TAP!"}[prompt_dir]
+	for y in [[212.0, prompt_text, 30, Color("fff8e1")], [250.0, words, 34, gold]]:
+		c.draw_string_outline(ui_font, Vector2(0, y[0]), y[1], HORIZONTAL_ALIGNMENT_CENTER, c.size.x, y[2], 8, dark)
+		c.draw_string(ui_font, Vector2(0, y[0]), y[1], HORIZONTAL_ALIGNMENT_CENTER, c.size.x, y[2], y[3])
+
+
+func swipe_dir(d: Vector2) -> String:
+	if d.length() < 45.0:
+		return "tap"
+	if absf(d.x) > absf(d.y):
+		return "right" if d.x > 0.0 else "left"
+	return "up" if d.y < 0.0 else "down"
+
+
 
 
 func disp(p: Dictionary) -> String:
@@ -2561,7 +2805,7 @@ func preview(p: Dictionary, n: int, quiet := false) -> float:
 			quip(p, "rope")
 		p.a.express("happy")
 	elif kind == "snake":
-		show_card("s_snake", "%s: COBRA!" % who, "Thrown back %d slabs" % (dest - snake_to[dest]), red, 1.4)
+		show_card("s_snake", "%s: COBRA!" % who, "Thrown back %d slabs" % (dest - back_to(dest, snake_to[dest])), red, 1.4)
 		if not quiet:
 			quip(p, "snake")
 		p.a.express("scared")
@@ -2624,11 +2868,13 @@ func show_trail(p: Dictionary, n: int) -> Node3D:
 	return t
 
 
-func roll(p: Dictionary) -> int:
+func roll(p: Dictionary, quick := false) -> int:
 	# returns 1-6, or 0 when the player let the timer run out
 	die_color = p.color
 	place_die(not is_bot(p))
-	if is_bot(p):
+	if quick:
+		pass
+	elif is_bot(p):
 		say("%s rolls" % p.name)
 		await wait(0.2)
 	else:
@@ -2681,7 +2927,7 @@ func move(p: Dictionary, n: int) -> void:
 			else:
 				break
 		else:
-			await stride(p, nxt)
+			var cleared: bool = await stride(p, nxt)
 			sfx.play("step", -7.0)
 			burst(root.position, STONE.lightened(0.2), 4, 1.8)
 			p.pos = nxt
@@ -2689,6 +2935,11 @@ func move(p: Dictionary, n: int) -> void:
 				sfx.play("fire", -8.0)
 				for side in [-1.08, 1.08]:
 					burst(path[nxt] + Vector3(side, 1.5, 0).rotated(Vector3.UP, yaws[nxt]), Color("ff9a2e"), 9, 4.5)
+			if not cleared:
+				p.a.run = true
+				collect(p)
+				refresh_ui(p)
+				break
 		collect(p)
 		refresh_ui(p)
 	p.a.run = false
@@ -2714,13 +2965,14 @@ func move(p: Dictionary, n: int) -> void:
 	await bump(p)
 
 
-func stride(p: Dictionary, nxt: int) -> void:
+func stride(p: Dictionary, nxt: int) -> bool:
+	# Returns false when the runner tripped on a hurdle (their move ends).
 	# One step to the next slab. Hurdles are cleared with a parkour move.
 	var root: Node3D = p.a
 	# parkour happens only where there is something to clear, so the move always has a visible reason
 	var style := ""
 	if hurdles.has(nxt):
-		style = "slide" if hurdles[nxt] == "beam" else ("vault" if hurdles[nxt] == "log" else "flip")
+		style = {"beam": "slide", "log": "vault", "block": "flip", "blade": "spin"}[hurdles[nxt]]
 	var dy: float = spot(p, nxt).y - root.position.y
 	if dy > 0.9:  # a ledge: spring up, hands on top, swing the legs over
 		root.pose = "vault"
@@ -2732,7 +2984,7 @@ func stride(p: Dictionary, nxt: int) -> void:
 		squash(root)
 		sfx.play("land", -6.0)
 		burst(root.position, STONE.lightened(0.25), 6, 2.0)
-		return
+		return true
 	if dy < -0.9:  # a drop: leap off and land heavily
 		quip(p, "drop", 0.4)
 		root.air = true
@@ -2743,15 +2995,15 @@ func stride(p: Dictionary, nxt: int) -> void:
 		shake(0.2)
 		sfx.play("land", -2.0, 0.8)
 		burst(root.position, STONE.lightened(0.25), 12, 3.0)
-		return
+		return true
 	if style == "":
 		# a running stride: fast and low, just clearing the gap between slabs;
 		# it lifts more when the next slab is a step up
 		await hop(root, spot(p, nxt), 0.12 + maxf(0.0, dy) * 0.55 + (0.1 if dy < -0.2 else 0.0), 0.3 + absf(dy) * 0.08)
-		return
-	# Parkour, in beats that can be followed: run up to the obstacle, coil,
-	# then the move itself in slow motion and seen from the side, with a trail,
-	# and a clean landing. The move is named as it starts.
+		return true
+	# Parkour, in beats that can be followed: run up to the obstacle and coil;
+	# you make the move (tap, or swipe the right way); then the move itself, in
+	# slow motion from the side on your own turn, and a clean landing.
 	root.yaw_goal = NAN
 	var yaw: float = yaws[p.pos]
 	var from := root.position
@@ -2762,14 +3014,38 @@ func stride(p: Dictionary, nxt: int) -> void:
 	await run_up.finished
 	root.run = false
 	root.pose = "crouch"
-	spotlight(p, 0.45, 4.4)
-	var label: String = {"vault": "VAULT!", "flip": "FRONT FLIP!", "slide": "SLIDE!"}[style]
-	announce(label, Color("ffe066"))
-	await wait(0.2)
-	root.pose = {"vault": "vault", "flip": "tuck", "slide": "slide"}[style]
+	var mine := not is_bot(p)
+	var ok := rng.randf() < 0.9
+	if mine:
+		ok = await ask_move({"vault": "up", "flip": "up", "slide": "down", "spin": "side"}[style], {"vault": "LOG! VAULT", "flip": "WALL! FLIP", "slide": "BEAM! SLIDE", "spin": "BLADE! DODGE"}[style])
+	if not ok:  # tripped: over it in a heap. No life lost, but the move ends here
+		popup(root.position, "TRIPPED!", Color("ff9a2e"))
+		sfx.play("oof", -2.0)
+		root.pose = "hit"
+		root.express("pain", 1.0)
+		await hop(root, to, 0.8, 0.38)
+		root.pose = ""
+		root.rotation = Vector3(0, yaw, 0)
+		squash(root)
+		sfx.play("bodyfall", -2.0)
+		burst(root.position, STONE.lightened(0.25), 12, 3.0)
+		stars(root)
+		quip(p, "trip", 0.7)
+		say("%s tripped. The move ends here" % subj(p))
+		await wait(0.5)
+		return false
+	var label: String = {"vault": "VAULT!", "flip": "FRONT FLIP!", "slide": "SLIDE!", "spin": "DODGE!"}[style]
+	if mine:
+		spotlight(p, 0.5, 3.0)
+		zoom_to = 0.4  # only a little closer: the obstacle has to stay in the picture
+		announce(label, Color("ffe066"))
+		await wait(0.15)
+	else:
+		popup(root.position, label, Color("ffe066"))
+	root.pose = {"vault": "vault", "flip": "tuck", "slide": "slide", "spin": "guard"}[style]
 	sfx.play("whoosh", -3.0, 0.8)
 	var col: Color = p.color
-	var dur: float = {"vault": 0.62, "flip": 0.8, "slide": 0.62}[style]
+	var dur: float = {"vault": 0.62, "flip": 0.8, "slide": 0.62, "spin": 0.6}[style]
 	var tw := create_tween()
 	tw.tween_method(func(t: float) -> void:
 		_parkour(t, root, edge, to, style, yaw)
@@ -2786,13 +3062,16 @@ func stride(p: Dictionary, nxt: int) -> void:
 		sfx.play("land", -3.0)
 		squash(root)
 		burst(root.position, STONE.lightened(0.25), 10, 3.0)
-	await wait(0.18)
-	if rng.randf() < 0.6:
-		await celebrate(p)
-	else:
-		quip(p, "parkour", 0.5)
+	if mine:
+		earn(p, 1)  # a clean move pays
+		await wait(0.15)
+		if rng.randf() < 0.3:
+			await celebrate(p)
+		else:
+			quip(p, "parkour", 0.5)
+		spot_off()
 	root.run = true
-	spot_off()
+	return true
 
 
 func celebrate(p: Dictionary) -> void:
@@ -2847,8 +3126,9 @@ func _parkour(t: float, root: Node3D, from: Vector3, to: Vector3, style: String,
 		"slide":
 			root.rotation = Vector3(sin(t * PI) * 1.3, yaw, 0)
 			at.y -= sin(t * PI) * 0.12
-		"spin":
-			root.rotation = Vector3(0, yaw + TAU * t, 0)
+		"spin":  # low, turning once, leaning away from the blade
+			root.rotation = Vector3(0, yaw + TAU * t, sin(t * PI) * 0.35)
+			at.y -= sin(t * PI) * 0.7
 	root.position = at
 
 
@@ -2861,22 +3141,7 @@ func jump_phase(p: Dictionary, nxt: int) -> bool:
 		await wait(0.3)
 		hit = rng.randf() < 0.7
 	else:
-		jump_hit = false
-		jump_open = true
-		die.visible = false
-		say("SPIKES! TAP TO JUMP")
-		add_button("JUMP!", Color("ff5a36"), func() -> void: jump_hit = true)
-		jump_bar.modulate.a = 1.0
-		var t := 0.0
-		while t < JUMP_WINDOW and not jump_hit:
-			await frame()
-			t += get_process_delta_time()
-			set_meter(jump_bar, 1.0 - t / JUMP_WINDOW)
-		jump_open = false
-		die.visible = true
-		jump_bar.modulate.a = 0.0
-		clear_buttons()
-		hit = jump_hit
+		hit = await ask_move("up", "SPIKES! JUMP")
 	if hit:
 		spotlight(p, 0.5)
 		say("%s cleared the spikes" % subj(p))
@@ -2942,9 +3207,16 @@ func settle(p: Dictionary, forced := false) -> void:
 	p.a.rotation = Vector3(0, yaws[mini(p.pos, END)], 0)
 
 
+func back_to(from: int, d: int) -> int:
+	# Where a setback from slab "from" really ends. Never more than 6 slabs,
+	# never past the last torch behind the runner, and never behind the boulder
+	# or right in front of it.
+	var floor_at: int = maxi(from - 6, ((from - 1) / 5) * 5)
+	return clampi(maxi(maxi(d, floor_at), bo + 3), 0, from)
+
+
 func safe_back(p: Dictionary, d: int) -> int:
-	# where a setback really puts a runner: never behind the boulder or right in front of it
-	return clampi(maxi(d, bo + 3), 0, p.pos)
+	return back_to(p.pos, d)
 
 
 func land(p: Dictionary, safe := false) -> void:
@@ -2980,7 +3252,7 @@ func earn(p: Dictionary, n: int) -> void:
 	sfx.play("coin")
 	popup(p.a.position, "+%d" % n, GOLD)
 	burst(p.a.position + Vector3(0, 1.2, 0), GOLD, 6, 3.0)
-	if p.coins >= 10 and p.hearts < 5:  # ten coins buy a life
+	if is_bot(p) and p.coins >= 10 and p.hearts < 5:  # bots turn ten coins into a life; you choose what to buy
 		p.coins -= 10
 		p.hearts += 1
 		announce("+1 LIFE", Color("7dff9b"))
@@ -3807,11 +4079,44 @@ func update_sky(delta: float) -> void:
 
 
 func bump(p: Dictionary) -> void:
+	# Landing on an occupied slab: fight for it, or share it. You are asked;
+	# a bot fights when the odds favour it, and sometimes when they do not.
 	if p.pos <= 5:  # start zone is safe
 		return
 	for q in players:
-		if q != p and active(q) and q.pos == p.pos:
-			await fight(p, q)
+		if q != p and active(q) and active(p) and q.pos == p.pos:
+			var odds := fight_odds(p, q)
+			var go: bool = odds >= 0.5 or rng.randf() < 0.25
+			if not is_bot(p):
+				go = await ask_fight(q, odds)
+			if go:
+				await fight(p, q)
+			else:
+				popup(p.a.position, "SHARED", Color("7dff9b"))
+				say("%s shares the slab with %s" % [subj(p), obj(q)])
+				quip(p, "share", 0.7)
+				await wait(0.4)
+
+
+func ask_fight(q: Dictionary, odds: float) -> bool:
+	choice = ""
+	clear_buttons()
+	say("%s is on this slab" % q.name.capitalize())
+	show_card("heart", "FIGHT FOR THE SLAB?", "Winner stays. Loser is knocked back and loses a life", Color("ff6b5e"), 6.0)
+	add_button("FIGHT\n%d%% TO WIN" % roundi(odds * 100.0), Color("c0392b"), func() -> void: choice = "fight", 32)
+	add_button("PASS\nSHARE IT", Color("3fae5a"), func() -> void: choice = "pass", 32)
+	turn_bar.visible = true
+	var left := 6.0
+	while left > 0.0 and choice == "":
+		await frame()
+		left -= get_process_delta_time()
+		set_meter(turn_bar, left / 6.0)
+	turn_bar.visible = false
+	clear_buttons()
+	if card_tw:
+		card_tw.kill()
+	card.visible = false
+	return choice == "fight"
 
 
 func fight_odds(p: Dictionary, q: Dictionary) -> float:
@@ -3844,26 +4149,40 @@ func fight(p: Dictionary, q: Dictionary) -> void:
 	quip(p, "fight_start")
 	quip(q, "fight_reply")
 	sfx.play("gong", -2.0)
-	a.look_at(Vector3(b.position.x, a.position.y, b.position.z))
-	b.look_at(Vector3(a.position.x, b.position.y, a.position.z))
 	var homes := {a: a.position, b: b.position}
 	var mid := (a.position + b.position) / 2.0
+	# The fight is staged to be read: the two step apart and face each other in
+	# profile, the 3D view goes to full resolution for the close-up, and every
+	# blow is named, wound up, landed and held.
+	view_box.stretch_shrink = 1
+	var along: Vector3 = dirs[clampi(p.pos, 0, dirs.size() - 1)] * 0.8
+	a.create_tween().tween_property(a, "position", mid - along, 0.15)
+	b.create_tween().tween_property(b, "position", mid + along, 0.15)
+	spotlight(p, 0.6, 6.0)  # square-on from the side, far enough back to keep both in the picture
+	await wait(0.18)
+	a.look_at(Vector3(b.position.x, a.position.y, b.position.z))
+	b.look_at(Vector3(a.position.x, b.position.y, a.position.z))
 	a.pose = "guard"
 	b.pose = "guard"
 	a.express("angry")
 	b.express("angry")
-	spotlight(p, 0.7)
-	await wait(0.55)
+	await wait(1.0)  # the FIGHT banner clears before the first blow
 	# exchanges: the loser lands one too, so the result is not obvious at once
-	var rounds := [[ln, wn, "punch", "POW!"], [wn, ln, "punch", "BAM!"], [wn, ln, "kick", "WHACK!"]]
+	var rounds := [[ln, wn, "punch", "PUNCH", "POW!"], [wn, ln, "punch", "PUNCH", "BAM!"], [wn, ln, "kick", "KICK", "WHACK!"]]
 	for r in rounds:
 		var att: Node3D = r[0]
 		var vic: Node3D = r[1]
+		var who: Dictionary = win if att == wn else lose
 		var from := att.position
+		var to_vic := (vic.position - from).normalized()
+		say("%s: %s" % ["YOU" if not who.bot else who.name, r[3]])
+		var back := att.create_tween()  # wind-up: lean away first
+		back.tween_property(att, "position", from - to_vic * 0.3, 0.16)
+		await back.finished
 		att.pose = r[2]
 		sfx.play("whoosh", -4.0)
 		var lunge := att.create_tween()
-		lunge.tween_property(att, "position", from.lerp(vic.position, 0.45), 0.09)
+		lunge.tween_property(att, "position", from + to_vic * 0.75, 0.1)
 		await lunge.finished
 		if r[2] == "kick":
 			sfx.play("kick", 1.0)
@@ -3876,21 +4195,13 @@ func fight(p: Dictionary, q: Dictionary) -> void:
 		att.express("angry")
 		burst(vic.position + Vector3(0, 1.1, 0), Color("fff8e1"), 9, 4.5)
 		burst(vic.position + Vector3(0, 1.5, 0), Color("ffe066"), 7, 6.0)  # comic stars
-		popup(vic.position, r[3], Color("ffe066"))
-		await hitstop(0.06)
-		att.create_tween().tween_property(att, "position", from, 0.14)
-		await wait(0.24)
+		popup(vic.position, r[4], Color("ffe066"))
+		await hitstop(0.08)
+		await wait(0.36)  # the blow is held, so it can be seen
+		att.create_tween().tween_property(att, "position", from, 0.16)
+		await wait(0.2)
 		att.pose = "guard"
 		vic.pose = "guard"
-	for k in 4:  # the scuffle
-		burst(mid + Vector3(rng.randf_range(-0.4, 0.4), 0.8, rng.randf_range(-0.4, 0.4)), Color("efe6cf"), 12, 3.5)
-		sfx.hit()
-		if k % 2 == 0:
-			sfx.play("whoosh", -8.0)
-		shake(0.15)
-		wn.pose = "punch" if k % 2 == 0 else "kick"
-		ln.pose = "hit" if k % 2 == 0 else "punch"
-		await wait(0.11)
 	wn.pose = "kick"
 	ln.pose = "hit"
 	ln.express("ko", 2.4)
@@ -3925,6 +4236,7 @@ func fight(p: Dictionary, q: Dictionary) -> void:
 	ln.pose = ""
 	wn.position = homes[wn]
 	wn.rotation = Vector3(0, yaws[win.pos], 0)
+	view_box.stretch_shrink = GFX[gfx].shrink
 	var landed: int = lose.pos
 	await hurt(lose)
 	if active(lose) and lose.pos == landed:
@@ -4234,12 +4546,43 @@ func menu(page: String) -> void:
 			faces.draw.connect(_draw_faces.bind(faces))
 			v.add_child(faces)
 			title(v, "%d bot%s will race you" % [bot_count, "" if bot_count == 1 else "s"], 26, cream)
+			title(v, "PATH LENGTH", 26, cream)
+			var est := title(v, "%d slabs: about %d min" % [path_len, estimate_minutes(path_len, bot_count)], 26, Color("ffe08a"))
+			var sl := HSlider.new()
+			sl.min_value = 50
+			sl.max_value = 80
+			sl.step = 5
+			sl.value = path_len
+			sl.custom_minimum_size = Vector2(0, 64)
+			var groove := _round(Color("2a2118"), 12, 4, Color("c98a1e"))
+			groove.content_margin_top = 11
+			groove.content_margin_bottom = 11
+			sl.add_theme_stylebox_override("slider", groove)
+			for part in ["grabber_area", "grabber_area_highlight"]:
+				sl.add_theme_stylebox_override(part, _round(Color("ee8a1c"), 12, 4, Color("ffd76a")))
+			for part in ["grabber", "grabber_highlight"]:
+				sl.add_theme_icon_override(part, _knob())
+			v.add_child(sl)
+			var ends := HBoxContainer.new()
+			v.add_child(ends)
+			for e in [["50  SHORT", HORIZONTAL_ALIGNMENT_LEFT], ["LONG  80", HORIZONTAL_ALIGNMENT_RIGHT]]:
+				var el := title(ends, e[0], 18, Color("c9b98a"))
+				el.autowrap_mode = TextServer.AUTOWRAP_OFF
+				el.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+				el.horizontal_alignment = e[1]
+			sl.value_changed.connect(func(val: float) -> void:
+				path_len = int(val)
+				sfx.play("step", -8.0)
+				est.text = "%d slabs: about %d min" % [path_len, estimate_minutes(path_len, bot_count)])
+			sl.drag_ended.connect(func(_changed: bool) -> void:
+				save_settings()
+				prepare_world())  # the map behind the menu is rebuilt at the new length
 			menu_button(v, "START RACE", orange, begin_picked, true, 48).custom_minimum_size = Vector2(0, 124)
 			icon_button(_draw_back, menu.bind("main"), false)
 		"help":
 			title(v, "HOW TO PLAY", 50, GOLD)
 			title(v, "Roll the die. First to the temple gate wins. The boulder chases whoever is last: if it hits you, you lose a life.", 22, cream)
-			var rules := [["s_rope", "ROPE", "Swing far ahead"], ["s_snake", "COBRA", "Thrown far back"], ["s_tiger", "TIGER", "Eyes in the bush: lose a life, flee back 4"], ["s_spike", "SPIKES", "Tap in time to jump, or lose a life"], ["s_crumble", "CRACKED SLAB", "You fall and lose a life"], ["s_mystery", "MYSTERY", "An animal or a treasure chest"], ["heart", "3 LIVES", "Lose them all: use a respawn"], ["heart_empty", "WOUNDED", "After any hit: weaker in fights for 2 turns"], ["ankh", "2 RESPAWNS", "None left: you are out"], ["banana", "BANANA (RARE)", "A gorilla carries you clear of a fatal hit"]]
+			var rules := [["s_rope", "ROPE", "Swing far ahead"], ["s_snake", "COBRA", "Thrown far back"], ["s_tiger", "TIGER", "Eyes in the bush: lose a life, flee back 4"], ["s_spike", "SPIKES", "Tap or swipe in time to jump, or lose a life"], ["coin", "COINS", "After your roll: reroll, run +3, shield or a life"], ["s_crumble", "CRACKED SLAB", "You fall and lose a life"], ["s_mystery", "MYSTERY", "An animal or a treasure chest"], ["heart", "3 LIVES", "Lose them all: use a respawn"], ["heart_empty", "WOUNDED", "After any hit: weaker in fights for 2 turns"], ["ankh", "2 RESPAWNS", "None left: you are out"], ["banana", "BANANA (RARE)", "A gorilla carries you clear of a fatal hit"]]
 			for g in rules:
 				var line := HBoxContainer.new()
 				line.add_theme_constant_override("separation", 14)
@@ -4267,30 +4610,44 @@ func menu(page: String) -> void:
 			if records.is_empty():
 				title(v, "No races yet. Finish one to set your first score.", 24, Color("c9b98a"))
 			v.add_theme_constant_override("separation", 10)
-			for k in mini(records.size(), 8):
+			for k in mini(records.size(), 6):
 				var r: Dictionary = records[k]
+				var rim: Color = [GOLD, Color("d9dde2"), Color("d08a4a")][k] if k < 3 else Color("6b5a44")
+				var plate := _round([Color("4a3a14"), Color("3a3d42"), Color("46301e")][k] if k < 3 else Color("2a2520"), 16, 4, rim)
+				plate.content_margin_left = 14
+				plate.content_margin_right = 16
+				plate.content_margin_top = 8
+				plate.content_margin_bottom = 8
+				var rowp := PanelContainer.new()
+				rowp.add_theme_stylebox_override("panel", plate)
+				v.add_child(rowp)
 				var line := HBoxContainer.new()
-				v.add_child(line)
-				var medal: Color = [GOLD, Color("d9dde2"), Color("d08a4a")][k] if k < 3 else cream
-				var rk := title(line, "%d." % (k + 1), 30, medal)
-				rk.custom_minimum_size = Vector2(56, 0)
-				rk.autowrap_mode = TextServer.AUTOWRAP_OFF
-				var sc := title(line, str(int(r.score)), 30, medal)
-				sc.custom_minimum_size = Vector2(120, 0)
-				sc.autowrap_mode = TextServer.AUTOWRAP_OFF
-				sc.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+				line.add_theme_constant_override("separation", 14)
+				rowp.add_child(line)
+				var badge := Control.new()
+				badge.custom_minimum_size = Vector2(60, 60)
+				badge.draw.connect(func() -> void: _medal(badge, Vector2(4, 4), k + 1, 52))
+				line.add_child(badge)
 				var pl: int = int(r.place)
-				var what := ("#%d" % pl if pl > 0 else "out") + "  vs %d  %d coins" % [int(r.bots), int(r.coins)]
-				var info := title(line, what, 21, Color("c9b98a"))
-				info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-				info.autowrap_mode = TextServer.AUTOWRAP_OFF
-				info.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+				var words := VBoxContainer.new()
+				words.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+				words.add_theme_constant_override("separation", -6)
+				line.add_child(words)
+				var top := title(words, ("WON" if pl == 1 else ("FINISHED #%d" % pl if pl > 0 else "KNOCKED OUT")) + "  vs %d" % int(r.bots), 24, rim if k < 3 else cream)
+				top.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+				top.autowrap_mode = TextServer.AUTOWRAP_OFF
+				var sub := title(words, "%d coins   %d rounds   %s" % [int(r.coins), int(r.get("rounds", 0)), str(r.get("date", ""))], 17, Color("c9b98a"))
+				sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+				sub.autowrap_mode = TextServer.AUTOWRAP_OFF
+				var sc := title(line, str(int(r.score)), 40, rim if k < 3 else cream)
+				sc.autowrap_mode = TextServer.AUTOWRAP_OFF
+				sc.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 			title(v, "Online world ranking: coming soon", 20, cream)
 			icon_button(_draw_back, menu.bind("main"), false)
 		"shop":
 			title(v, "POWER-UPS", 54, GOLD)
 			title(v, "Your coins: %d" % wallet, 30, cream)
-			var goods := [["shield", "SHIELD", "Blocks the next hit", 30], ["ankh", "RESPAWN", "One extra comeback", 50], ["heart", "EXTRA LIFE", "Start with 4 hearts", 20], ["trophy", "LUCKY DIE", "Re-roll once a game", 40], ["banana", "BANANA", "A gorilla saves you once", 80]]
+			var goods := [["trophy", "REROLL", "Roll the die again", COST.reroll], ["s_rope", "RUN +3", "Go 3 slabs further this turn", COST.sprint], ["shield", "SHIELD", "Blocks the next hit", COST.shield], ["heart", "LIFE", "One more heart", COST.life]]
 			for g in goods:
 				var line := HBoxContainer.new()
 				line.add_theme_constant_override("separation", 14)
@@ -4311,28 +4668,29 @@ func menu(page: String) -> void:
 				var price := menu_button(line, str(g[3]), wood, menu.bind("shop"), false, 30)
 				price.custom_minimum_size = Vector2(130, 78)
 				price.add_theme_stylebox_override("disabled", _card_plain(Color("3a342c")))
-			title(v, "Buying opens in a later update. Coins you win are saved.", 20, cream)
+			title(v, "Spend them in a race, on your turn, after you roll. Coins you win are kept between races.", 20, cream)
 			icon_button(_draw_back, menu.bind("main"), false)
 		"settings":
-			title(v, "SETTINGS", 54, GOLD)
-			title(v, "CAMERA", 28, cream)
-			menu_button(v, "FOLLOW THE TURN", green if view_mode == "turn" else wood, set_view.bind("turn"), true, 32)
-			menu_button(v, "STAY ON MY PLAYER", green if view_mode == "mine" else wood, set_view.bind("mine"), true, 32)
-			title(v, "YOUR CHARACTER", 28, cream)
-			var who_row := HBoxContainer.new()
-			who_row.add_theme_constant_override("separation", 14)
-			v.add_child(who_row)
-			menu_button(who_row, "MALE", green if not female else wood, set_female.bind(false), true, 30).size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			menu_button(who_row, "FEMALE", green if female else wood, set_female.bind(true), true, 30).size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			title(v, "GRAPHICS", 28, cream)
-			var gfx_row := HBoxContainer.new()
-			gfx_row.add_theme_constant_override("separation", 14)
-			v.add_child(gfx_row)
-			for lv in GFX.size():
-				menu_button(gfx_row, GFX[lv].name, green if gfx == lv else wood, set_gfx.bind(lv), true, 26).size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			title(v, GFX[gfx].about, 20, cream)
-			title(v, "SOUND", 28, cream)
-			menu_button(v, "ON" if sound_on else "OFF", green if sound_on else wood, toggle_sound, true, 36)
+			v.add_theme_constant_override("separation", 8)
+			title(v, "SETTINGS", 48, GOLD)
+			var groups := [
+				["CAMERA", "", [["FOLLOW TURN", view_mode == "turn", set_view.bind("turn")], ["MY PLAYER", view_mode == "mine", set_view.bind("mine")]]],
+				["YOUR CHARACTER", "", [["MALE", not female, set_female.bind(false)], ["FEMALE", female, set_female.bind(true)]]],
+				["CONTROLS", "One tap clears any obstacle" if controls == "tap" else "Swipe up to jump, down to slide, sideways to dodge", [["TAP", controls == "tap", set_controls.bind("tap")], ["SWIPE", controls == "swipe", set_controls.bind("swipe")]]],
+				["GRAPHICS", GFX[gfx].about, [["LOW", gfx == 0, set_gfx.bind(0)], ["MEDIUM", gfx == 1, set_gfx.bind(1)], ["HIGH", gfx == 2, set_gfx.bind(2)]]],
+				["SOUND", "", [["ON", sound_on, toggle_sound if not sound_on else menu.bind("settings")], ["OFF", not sound_on, toggle_sound if sound_on else menu.bind("settings")]]],
+			]
+			for g in groups:
+				title(v, g[0], 24, cream)
+				var row := HBoxContainer.new()
+				row.add_theme_constant_override("separation", 12)
+				v.add_child(row)
+				for o in g[2]:
+					var ob := menu_button(row, o[0], green if o[1] else wood, o[2], true, 26)
+					ob.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+					ob.custom_minimum_size = Vector2(0, 72)
+				if g[1] != "":
+					title(v, g[1], 18, Color("c9b98a"))
 			icon_button(_draw_back, menu.bind("main"), false)
 
 
@@ -4426,6 +4784,33 @@ func set_female(on: bool) -> void:
 	menu("settings")
 
 
+func set_controls(mode: String) -> void:
+	controls = mode
+	save_settings()
+	menu("settings")
+
+
+func _knob() -> Texture2D:
+	# round gold handle for the slider, drawn once
+	if not tex_cache.has("knob"):
+		var im := Image.create(52, 52, false, Image.FORMAT_RGBA8)
+		for y in 52:
+			for x in 52:
+				var d := Vector2(x - 25.5, y - 25.5).length()
+				if d < 25.0:
+					im.set_pixel(x, y, Color("2a2118") if d > 21.0 else (Color("fff3c4") if d < 9.0 else Color("ffd76a")))
+		tex_cache["knob"] = ImageTexture.create_from_image(im)
+	return tex_cache["knob"]
+
+
+func estimate_minutes(slabs: int, bots: int) -> int:
+	# How long a race should take. A turn nets about 3.4 slabs once ropes,
+	# tailwinds, setbacks and lost turns are counted; a round is your own turn
+	# plus each bot's quicker one, plus the boulder.
+	var rounds := slabs / 3.4
+	return maxi(1, roundi(rounds * (12.0 + 5.5 * bots) / 60.0))
+
+
 func open_support() -> void:
 	OS.shell_open(SUPPORT_URL)
 
@@ -4445,6 +4830,8 @@ func save_settings() -> void:
 	cf.set_value("game", "sound", sound_on)
 	cf.set_value("game", "female", female)
 	cf.set_value("game", "gfx", gfx)
+	cf.set_value("game", "controls", controls)
+	cf.set_value("game", "path_len", path_len)
 	cf.set_value("game", "wallet", wallet)
 	cf.set_value("game", "records", records)
 	cf.set_value("game", "stats", stats)
@@ -4458,6 +4845,8 @@ func load_settings() -> void:
 		sound_on = cf.get_value("game", "sound", true)
 		female = cf.get_value("game", "female", false)
 		gfx = clampi(int(cf.get_value("game", "gfx", gfx)), 0, GFX.size() - 1)
+		controls = cf.get_value("game", "controls", "tap")
+		path_len = clampi(int(cf.get_value("game", "path_len", 80)), 50, 80)
 		wallet = cf.get_value("game", "wallet", 0)
 		records = cf.get_value("game", "records", [])
 		stats = cf.get_value("game", "stats", {"races": 0, "wins": 0})
@@ -4556,17 +4945,37 @@ func _flock() -> void:
 
 
 func _input(event: InputEvent) -> void:
-	var pressed: bool = (event is InputEventScreenTouch or event is InputEventMouseButton) and event.pressed
-	if not pressed:
+	var touch: bool = event is InputEventScreenTouch or (event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT)
+	if touch and not event.pressed:  # finger up: a short press is a tap, a long drag a swipe
+		if touching and jump_open and gesture == "":
+			gesture = swipe_dir(event.position - touch_at)
+		touching = false
 		return
+	if (event is InputEventScreenDrag or event is InputEventMouseMotion) and touching and jump_open and gesture == "":
+		var g := swipe_dir(event.position - touch_at)
+		if g != "tap":  # the swipe counts as soon as it is long enough
+			gesture = g
+		return
+	if not touch:
+		return
+	touch_at = event.position
+	touching = true
 	if in_cine:
 		skip_intro = true
 		return
 	if jump_open:
-		jump_hit = true
-	elif await_roll:  # a tap anywhere rolls, not only on the die
-		await_roll = false
-		rolled.emit()
+		if controls != "swipe":
+			gesture = "tap"
+	elif choosing or await_roll:  # a tap anywhere rolls or moves, unless it was on a button
+		await get_tree().process_frame
+		await get_tree().process_frame
+		if clock - power_tap < 0.3:
+			return
+		if choosing:
+			go_now = true
+		elif await_roll:
+			await_roll = false
+			rolled.emit()
 
 
 func _process(delta: float) -> void:
@@ -4580,7 +4989,12 @@ func _process(delta: float) -> void:
 	zoom_k = move_toward(zoom_k, zoom_to, real * 3.0)
 	slow_now = move_toward(slow_now, slow_to, real * 3.5)
 	if not stopping:
-		Engine.time_scale = slow_now
+		Engine.time_scale = slow_now * turn_speed
+	if prompt.visible:
+		prompt.queue_redraw()
+	for sw in swingers:
+		if is_instance_valid(sw):
+			sw.rotation.z = sin(clock * 3.2) * 0.95
 	for g in pickups.values():
 		g.rotation.y += delta * 3.0
 	for i in reveals:  # signs pop in as runners approach
