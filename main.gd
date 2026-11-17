@@ -271,6 +271,8 @@ var power_tap := -9.0     # when a HUD button was last pressed, so that tap does
 var choosing := false     # the after-roll decision is open: a tap anywhere means "go"
 var go_now := false
 var choice := ""
+var life_btn: Button         # BOOST: opens the coin powers on your turn, only if you ask
+var life_open := false
 var pow_row: HBoxContainer  # decision buttons (coin powers, fight or pass), above the die
 var prompt: Control       # the big arrow that says which way to swipe
 var prompt_dir := ""
@@ -901,7 +903,7 @@ func build_world() -> void:
 	for k in bot_count + 1:
 		var r: Dictionary = ROSTER[k]
 		var p := {"name": r.name, "color": r.color, "off": r.off, "bot": k > 0,
-			"pos": 0, "out": false, "done": false, "danger": false, "skip": 0, "hearts": 3, "coins": 0, "revives": 2, "shield": false, "sprint": false, "wounded": 0, "banana": 0, "hit": {}}
+			"pos": 0, "out": false, "done": false, "danger": false, "skip": 0, "hearts": 3, "coins": 0, "revives": 2, "shield": false, "sprint": false, "safe": false, "wounded": 0, "banana": 0, "hit": {}}
 		p["a"] = make_actor(r.color, "YOU" if k == 0 else "", female if k == 0 else rng.randf() < 0.5)
 		p.a.position = spot(p, 0)
 		if not GFX[gfx].torches and k > 0:  # only your own torch casts real light at night
@@ -1683,6 +1685,30 @@ func _build_ui() -> void:
 	pow_row.add_theme_constant_override("separation", 10)
 	pow_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	safe.add_child(pow_row)
+	life_btn = Button.new()
+	life_btn.text = "BOOST"
+	life_btn.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
+	life_btn.offset_left = -196
+	life_btn.offset_right = -14
+	life_btn.offset_top = -160
+	life_btn.offset_bottom = -84
+	life_btn.action_mode = BaseButton.ACTION_MODE_BUTTON_PRESS
+	life_btn.add_theme_font_override("font", ui_font)
+	life_btn.add_theme_font_size_override("font_size", 24)
+	life_btn.add_theme_constant_override("outline_size", 8)
+	life_btn.add_theme_color_override("font_outline_color", Color("2a2118"))
+	for n in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color"]:
+		life_btn.add_theme_color_override(n, Color("fff8e1"))
+	life_btn.add_theme_stylebox_override("normal", _btn_style(Color("3fae5a"), false))
+	life_btn.add_theme_stylebox_override("hover", _btn_style(Color("3fae5a").lightened(0.08), false))
+	life_btn.add_theme_stylebox_override("pressed", _btn_style(Color("3fae5a").darkened(0.12), true))
+	life_btn.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	life_btn.pressed.connect(func() -> void:
+		power_tap = clock
+		life_open = not life_open
+		sfx.play("step"))
+	life_btn.visible = false
+	safe.add_child(life_btn)
 	prompt = Control.new()
 	prompt.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
 	prompt.offset_left = -170
@@ -2468,7 +2494,11 @@ func take_turn(p: Dictionary) -> void:
 			var spoke: bool = await react(p, n, steps)
 			trail = show_trail(p, steps)
 			var hold: float = preview(p, steps, spoke)
-			if is_bad(p, steps) and purse(p) >= COST.reroll and await offer_reroll(p):
+			if p.safe and is_bad(p, steps):  # the safe roll they bought: thrown again, once
+				await wait(hold)
+				popup(p.a.position, "SAFE ROLL!", Color("5fe0ff"))
+				burst(p.a.position + Vector3(0, 1, 0), Color("5fe0ff"), 14, 4.0)
+				sfx.play("good", -4.0)
 				trail.queue_free()
 				n = await roll(p, true)
 				steps = n + boost + (3 if p.sprint else 0)
@@ -2478,6 +2508,7 @@ func take_turn(p: Dictionary) -> void:
 			else:
 				await wait(hold)
 			p.sprint = false
+			p.safe = false
 		p.a.express("")
 		await move(p, steps)
 		if active(p) and p.pos > from_pos and not (kinds[p.pos] in HARMFUL):  # anyone passed on the way hears about it, and answers back
@@ -2521,46 +2552,27 @@ func pay(p: Dictionary, n: int) -> void:
 	refresh_ui()
 
 
-func offer_reroll(p: Dictionary) -> bool:
-	# Only when the roll lands on a trap: one button, a short timer, tap to accept the roll.
-	choosing = true
-	go_now = false
-	choice = ""
-	clear_buttons()
-	say("Bad landing. Roll again for %d coins, or tap to go" % COST.reroll)
-	add_button("REROLL  %d" % COST.reroll, Color("3f7fe0"), func() -> void: choice = "reroll", 34)
-	turn_bar.visible = true
-	var left := 4.0
-	while left > 0.0 and not go_now and choice == "":
-		await frame()
-		left -= get_process_delta_time()
-		set_meter(turn_bar, left / 4.0)
-	choosing = false
-	clear_buttons()
-	turn_bar.visible = false
-	if choice != "reroll":
-		return false
-	pay(p, COST.reroll)
-	popup(p.a.position, "REROLL!", Color("5fe0ff"))
-	return true
-
-
 func power_buttons(p: Dictionary) -> void:
-	# small optional buttons above the die while you wait to roll
+	# the lifelines, shown above the die only after BOOST is pressed
 	clear_buttons()
 	var have := purse(p)
+	if not p.safe:
+		add_button("SAFE ROLL\n%d" % COST.reroll, Color("3f7fe0"), func() -> void: choice = "reroll", 22)
 	if not p.sprint and have >= COST.sprint and p.pos + 4 < END:
-		add_button("RUN +3\n%d" % COST.sprint, Color("ee8a1c"), func() -> void: choice = "sprint", 24)
+		add_button("RUN +3\n%d" % COST.sprint, Color("ee8a1c"), func() -> void: choice = "sprint", 22)
 	if not p.shield and have >= COST.shield:
-		add_button("SHIELD\n%d" % COST.shield, Color("2f9aa8"), func() -> void: choice = "shield", 24)
+		add_button("SHIELD\n%d" % COST.shield, Color("2f9aa8"), func() -> void: choice = "shield", 22)
 	if p.hearts < 5 and have >= COST.life:
-		add_button("LIFE\n%d" % COST.life, Color("c0392b"), func() -> void: choice = "life", 24)
+		add_button("LIFE\n%d" % COST.life, Color("c0392b"), func() -> void: choice = "life", 22)
 
 
 func buy(p: Dictionary, what: String) -> void:
 	pay(p, COST[what])
 	var c := Color("5fe0ff")
 	match what:
+		"reroll":  # insurance: a roll that lands on a trap is thrown again
+			p.safe = true
+			popup(p.a.position, "SAFE ROLL READY", c)
 		"sprint":
 			p.sprint = true
 			c = Color("ffb347")
@@ -2883,17 +2895,29 @@ func roll(p: Dictionary, quick := false) -> int:
 		await_roll = true
 		choice = ""
 		p.sprint = false
-		power_buttons(p)
+		p.safe = false
+		life_open = false
+		var shown := false
+		life_btn.visible = purse(p) >= COST.reroll
 		var left := ROLL_TIME
 		while await_roll and left > 0.0:
 			await frame()
-			left -= get_process_delta_time()
+			if life_open != shown:  # BOOST pressed: show or put away the options
+				shown = life_open
+				if shown:
+					power_buttons(p)
+				else:
+					clear_buttons()
+			if not shown:  # the clock waits while you look at the options
+				left -= get_process_delta_time()
 			set_meter(turn_bar, left / ROLL_TIME)
-			if choice != "":  # a power bought while deciding: the clock starts again
+			if choice != "":
 				buy(p, choice)
 				choice = ""
 				power_buttons(p)
-				left = ROLL_TIME
+				life_btn.visible = purse(p) >= COST.reroll
+		life_btn.visible = false
+		life_open = false
 		clear_buttons()
 		pulse.kill()
 		die.scale = Vector2.ONE
@@ -4614,7 +4638,7 @@ func menu(page: String) -> void:
 		"help":
 			title(v, "HOW TO PLAY", 50, GOLD)
 			title(v, "Roll the die. First to the temple gate wins. The boulder chases whoever is last: if it hits you, you lose a life.", 22, cream)
-			var rules := [["s_rope", "ROPE", "Swing far ahead"], ["s_snake", "COBRA", "Thrown far back"], ["s_tiger", "TIGER", "Eyes in the bush: lose a life, flee back 4"], ["s_spike", "SPIKES", "Tap or swipe in time to jump, or lose a life"], ["coin", "COINS", "Before you roll: run +3, shield or a life"], ["s_crumble", "CRACKED SLAB", "You fall and lose a life"], ["s_mystery", "MYSTERY", "An animal or a treasure chest"], ["heart", "3 LIVES", "Lose them all: use a respawn"], ["heart_empty", "WOUNDED", "After any hit: weaker in fights for 2 turns"], ["ankh", "2 RESPAWNS", "None left: you are out"], ["banana", "BANANA (RARE)", "A gorilla carries you clear of a fatal hit"]]
+			var rules := [["s_rope", "ROPE", "Swing far ahead"], ["s_snake", "COBRA", "Thrown far back"], ["s_tiger", "TIGER", "Eyes in the bush: lose a life, flee back 4"], ["s_spike", "SPIKES", "Tap or swipe in time to jump, or lose a life"], ["coin", "BOOST", "On your turn: safe roll, run +3, shield, life"], ["s_crumble", "CRACKED SLAB", "You fall and lose a life"], ["s_mystery", "MYSTERY", "An animal or a treasure chest"], ["heart", "3 LIVES", "Lose them all: use a respawn"], ["heart_empty", "WOUNDED", "After any hit: weaker in fights for 2 turns"], ["ankh", "2 RESPAWNS", "None left: you are out"], ["banana", "BANANA (RARE)", "A gorilla carries you clear of a fatal hit"]]
 			for g in rules:
 				var line := HBoxContainer.new()
 				line.add_theme_constant_override("separation", 14)
@@ -4679,7 +4703,7 @@ func menu(page: String) -> void:
 		"shop":
 			title(v, "POWER-UPS", 54, GOLD)
 			title(v, "Your coins: %d" % wallet, 30, cream)
-			var goods := [["trophy", "REROLL", "Roll the die again", COST.reroll], ["s_rope", "RUN +3", "Go 3 slabs further this turn", COST.sprint], ["shield", "SHIELD", "Blocks the next hit", COST.shield], ["heart", "LIFE", "One more heart", COST.life]]
+			var goods := [["trophy", "SAFE ROLL", "Rolls again if you land on a trap", COST.reroll], ["s_rope", "RUN +3", "Go 3 slabs further this turn", COST.sprint], ["shield", "SHIELD", "Blocks the next hit", COST.shield], ["heart", "LIFE", "One more heart", COST.life]]
 			for g in goods:
 				var line := HBoxContainer.new()
 				line.add_theme_constant_override("separation", 14)
@@ -4700,7 +4724,7 @@ func menu(page: String) -> void:
 				var price := menu_button(line, str(g[3]), wood, menu.bind("shop"), false, 30)
 				price.custom_minimum_size = Vector2(130, 78)
 				price.add_theme_stylebox_override("disabled", _card_plain(Color("3a342c")))
-			title(v, "Buy them in a race with the buttons above the die, before you roll. Reroll is offered when a roll lands on a trap.", 20, cream)
+			title(v, "In a race, press BOOST on your turn, before you roll. Coins you win are kept between races.", 20, cream)
 			icon_button(_draw_back, menu.bind("main"), false)
 		"settings":
 			v.add_theme_constant_override("separation", 8)
@@ -4892,7 +4916,7 @@ func game_over(me: Dictionary) -> void:
 	set_die(0)
 	clear_buttons()
 	refresh_ui()
-	for n in [die, lbl_hint, turn_bar]:
+	for n in [die, lbl_hint, turn_bar, life_btn]:
 		n.visible = false
 	var place := finished.find(me) + 1
 	if place == 0 and not me.out:  # the others finished first: placed by how far you got

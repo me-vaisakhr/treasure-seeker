@@ -19,9 +19,9 @@ Open the folder in Godot 4.7 and press Play, or from a terminal:
 ## How it plays
 
 - Roll the die (tap anywhere). You have 8 seconds, or the turn is lost.
-- Coins buy powers with the buttons above the die, before you roll: run 3
-  further (5), shield (5), life (10). A roll that lands on a trap offers a
-  reroll (3). Coins are kept between races.
+- BOOST (button on your turn) spends coins before you roll: safe roll
+  (3, rolls again if you land on a trap), run 3 further (5), shield (5),
+  life (10). Coins are kept between races.
 - Special slabs: rope (swing ahead), cobra (thrown back), tiger ambush,
   spikes, cracked slab, and "?" (an animal or a chest).
 - Obstacles on the path need a timed input: spikes, log, wall, low beam and
