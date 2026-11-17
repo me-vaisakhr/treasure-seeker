@@ -19,26 +19,49 @@ const SUPPORT_URL := "https://buymeacoffee.com/vrkrishna9e"
 
 # What runners say, comic-strip style. One line is picked at random.
 const LINES := {
-	"rope": ["Yes! A rope! Let's go!", "A rope! My lucky day!", "Shortcut! Hold tight!", "Finally, some luck!"],
-	"snake": ["A COBRA?! Why me?!", "Nice snake... good snake...", "Oh no. Not the snake.", "Whose idea was this roll?!"],
-	"tiger": ["Is that... a TIGER?!", "Nobody move. Nobody breathe.", "I am NOT cat food!", "Great. A tiger. Thanks, dice."],
-	"spike": ["Spikes! Jump, jump, jump!", "Mind the pointy bits!", "I hate spikes!"],
-	"crumble": ["That slab looks cracked...", "It will hold. Probably.", "Why is the floor creaking?!"],
-	"mystery": ["Ooh, what is in there?", "Treasure? Or trouble?", "Please be gold. Please be gold."],
-	"treasure": ["The gate! I can see the gold!", "Treasure, here I come!", "Almost rich!"],
-	"boulder": ["RUN! The boulder!", "It is right behind us!", "Faster! FASTER!", "Roll high, or we are pancakes!"],
-	"boulder_hit": ["Oof! Flattened!", "That... was a big rock.", "I saw stars. And a boulder."],
-	"hit": ["Ouch! That hurt!", "My poor bones!", "I felt that one.", "Not my best moment."],
-	"six": ["A SIX! Yes! Again!", "Now THAT is a roll!", "The dice love me!"],
-	"high": ["Good roll! Go go go!", "That will do nicely!", "On our way!"],
-	"one": ["A ONE?! Come on, dice!", "One. Just... one.", "Who rolled that? You did!", "My grandma rolls better!"],
-	"low": ["Two steps. Wonderful.", "Is that all?!", "We will be here all day.", "Blame the dice, not me."],
-	"tailwind": ["I am catching up!", "Wait for me!", "Wind at my back!"],
-	"win_fight": ["Ha! My slab now!", "Too easy!", "Who is next?"],
-	"lose_fight": ["I let you win.", "Ow. Rude.", "This is not over!"],
-	"dodge": ["Not this time!", "Fool me once...", "I know that trick!"],
-	"reborn": ["I am back! Miss me?", "Right. Take two.", "Still in this race!"],
-	"win": ["I did it! The treasure!", "Gold! Glorious gold!", "Champion of the jungle!"],
+	"start": ["Last one there is tiger food!", "Treasure, here we come!", "Try to keep up!", "May the best explorer win. Me.", "Nobody touch my gold!"],
+	"rope": ["Yes! A rope! Let's go!", "A rope! My lucky day!", "Shortcut! Hold tight!", "Finally, some luck!", "Going up! See you later!", "I love ropes. Ropes love me."],
+	"rope_done": ["Easy as that!", "Did you see that swing?!", "And they said I skipped arm day.", "Shortcut taken. Thank you, rope."],
+	"snake": ["A COBRA?! Why me?!", "Nice snake... good snake...", "Oh no. Not the snake.", "Whose idea was this roll?!", "It is looking right at me.", "Maybe it is friendly? ...No."],
+	"snake_done": ["I hate snakes. I HATE them.", "All that way... gone.", "That snake has a good arm.", "Right. Not going near THAT again."],
+	"tiger": ["Is that... a TIGER?!", "Nobody move. Nobody breathe.", "I am NOT cat food!", "Great. A tiger. Thanks, dice.", "Here, kitty kitty... no?", "Those are very big teeth."],
+	"tiger_done": ["I can still feel its breath!", "Fastest I have ever run.", "New rule: no tigers.", "My legs are jelly."],
+	"spike": ["Spikes! Jump, jump, jump!", "Mind the pointy bits!", "I hate spikes!", "Time it right... time it right...", "Who puts SPIKES on a path?!"],
+	"crumble": ["That slab looks cracked...", "It will hold. Probably.", "Why is the floor creaking?!", "Step lightly. Very lightly.", "This temple needs repairs."],
+	"mystery": ["Ooh, what is in there?", "Treasure? Or trouble?", "Please be gold. Please be gold.", "I have a good feeling. Or a bad one.", "Surprise me! Nicely!"],
+	"treasure": ["The gate! I can see the gold!", "Treasure, here I come!", "Almost rich!", "This roll wins it!"],
+	"boulder": ["RUN! The boulder!", "It is right behind us!", "Faster! FASTER!", "Roll high, or we are pancakes!", "Do NOT look back. I looked back.", "That rock has it in for me!", "Move, move, MOVE!"],
+	"boulder_hit": ["Oof! Flattened!", "That... was a big rock.", "I saw stars. And a boulder.", "Flat as a dosa.", "I am fine. Everything hurts."],
+	"hit": ["Ouch! That hurt!", "My poor bones!", "I felt that one.", "Not my best moment.", "That is going to bruise.", "Who designed this place?!", "I need a holiday."],
+	"taunt": ["Ha! Did you see that?!", "Ooh, that looked painful.", "Thanks for testing that for us!", "Better you than me!", "Need a hand? No? Good."],
+	"six": ["A SIX! Yes! Again!", "Now THAT is a roll!", "The dice love me!", "Six! Keep them coming!", "Boom! Maximum!"],
+	"high": ["Good roll! Go go go!", "That will do nicely!", "On our way!", "Now we are moving!", "I will take it!"],
+	"one": ["A ONE?! Come on, dice!", "One. Just... one.", "Who rolled that? You did!", "My grandma rolls better!", "Were you even trying?!", "One step. Thrilling.", "The dice hate us. Or just you."],
+	"low": ["Two steps. Wonderful.", "Is that all?!", "We will be here all day.", "Blame the dice, not me.", "A snail just overtook us.", "Roll harder next time!"],
+	"tailwind": ["I am catching up!", "Wait for me!", "Wind at my back!", "Coming through!", "The comeback starts now!"],
+	"lead": ["Eat my dust!", "Lonely at the front!", "Anyone back there? No?", "First place suits me."],
+	"last": ["I am saving my energy.", "Slow and steady. Mostly slow.", "Just enjoying the view.", "Last is the new first. Right?"],
+	"fight_start": ["This slab is taken!", "Put them up!", "You picked the wrong slab!", "One of us is leaving!"],
+	"win_fight": ["Ha! My slab now!", "Too easy!", "Who is next?", "And stay off!", "Champion of this slab!"],
+	"lose_fight": ["I let you win.", "Ow. Rude.", "This is not over!", "I slipped. That is all.", "Fine. Keep the slab."],
+	"dodge": ["Not this time!", "Fool me once...", "I know that trick!", "Ha! Seen it before!", "Nice try, trap."],
+	"blocked": ["Shield up! Not today!", "Bounced right off!", "Worth every coin!"],
+	"reborn": ["I am back! Miss me?", "Right. Take two.", "Still in this race!", "Death was boring anyway.", "Where were we?"],
+	"healed": ["Good as new!", "Bandage off. Game on.", "Fit to fight again!"],
+	"coin": ["Shiny!", "Mine!", "Every coin counts!", "Ooh, a coin!"],
+	"diamond": ["A DIAMOND! Look at it!", "I am rich! Rich!", "Now that is treasure!"],
+	"chest": ["A chest! Open, open, open!", "Jackpot!", "Now we are talking!", "I knew it was the good kind!"],
+	"elephant": ["An elephant! All aboard!", "Now THIS is travel!", "Good elephant. Best elephant."],
+	"parrot": ["Thank you, feathered friend!", "A bird with good taste!", "Who is a clever parrot?"],
+	"monkey": ["Hey! Those are MINE!", "Thief! Come back!", "Robbed by a monkey. Great."],
+	"banana": ["Saved by a banana!", "Best gorilla ever!", "I owe that ape a fruit basket."],
+	"parkour": ["Smooth!", "Like a cat!", "Did you film that?!", "Parkour!", "Nothing to it!"],
+	"climb": ["Who built these stairs?!", "Up we go!", "My knees..."],
+	"drop": ["Geronimo!", "Mind the gap!", "Down the quick way!"],
+	"night": ["It is getting dark. Torches out!", "I can barely see the path.", "The jungle is louder at night..."],
+	"dawn": ["Morning at last!", "Sunrise! I can see again!"],
+	"rain": ["Rain. Of course it is raining.", "My hat is soaked.", "Slippery slabs. Lovely."],
+	"win": ["I did it! The treasure!", "Gold! Glorious gold!", "Champion of the jungle!", "Told you I would win!"],
 }
 const HEAL_TURNS := 2     # own turns a wound takes to heal; wounded runners fight worse
 const ROLL_TIME := 8.0   # seconds a player has to roll before the turn is lost
@@ -236,6 +259,9 @@ var bubble: PanelContainer     # comic speech bubble that follows a runner
 var bubble_lbl: Label
 var bubble_who: Node3D
 var bubble_until := 0.0
+var bubble_start := -9.0
+var bubble_q: Array = []   # lines waiting their turn: [speaker, text, seconds]
+var zoom_side := 1.9       # how far round to the side the close-up camera sits
 var female := false            # your character
 var pin_at := {}      # player name -> where their pin is drawn on the race bar (slabs, eased)
 var pin_bo := 0.0     # the boulder's pin
@@ -436,11 +462,13 @@ func hitstop(sec := 0.07) -> void:
 	Engine.time_scale = slow_now
 
 
-func spotlight(p: Dictionary, slow := 0.45) -> void:
+func spotlight(p: Dictionary, slow := 0.45, side := 1.9) -> void:
 	# Special move: the camera pushes in on this player and time slows, so the
-	# moment is easy to follow. Always paired with spot_off().
+	# moment is easy to follow. A larger "side" swings the camera round for a
+	# profile view. Always paired with spot_off().
 	zoom_p = p
 	zoom_to = 1.0
+	zoom_side = side
 	slow_to = slow
 	sfx.duck(true)
 
@@ -807,6 +835,8 @@ func build_world() -> void:
 	slabs.clear()
 	pickups.clear()
 	rescues.clear()
+	bubble_q.clear()
+	bubble.visible = false
 	pin_at.clear()
 	pin_bo = float(bo)
 	reveals.clear()
@@ -933,17 +963,24 @@ func make_slab(i: int, kind: String) -> Node3D:
 		var h: String = ["log", "block", "beam"][rng.randi_range(0, 2)]
 		hurdles[i] = h
 		match h:
-			"log":
-				box(root, Vector3(2.1, 0.42, 0.42), Vector3(0, 0.46, 0.8), shade(Color("6b4a2c")))
-				box(root, Vector3(0.1, 0.44, 0.44), Vector3(1.0, 0.46, 0.8), Color("c9a26b"))
-				box(root, Vector3(0.1, 0.44, 0.44), Vector3(-1.0, 0.46, 0.8), Color("c9a26b"))
-			"block":
-				box(root, Vector3(1.9, 0.6, 0.45), Vector3(0, 0.55, 0.8), shade(Color("9a8f72")))
-				box(root, Vector3(0.7, 0.14, 0.5), Vector3(0.3, 0.9, 0.8), shade(MOSS))
-			"beam":
+			"log":  # a fat fallen trunk across the path, on two stones: vault it
+				box(root, Vector3(2.3, 0.6, 0.6), Vector3(0, 0.62, 0.8), shade(Color("6b4a2c")))
+				for e in [-1.0, 1.0]:
+					box(root, Vector3(0.1, 0.62, 0.62), Vector3(e * 1.15, 0.62, 0.8), Color("c9a26b"))
+					box(root, Vector3(0.08, 0.3, 0.3), Vector3(e * 1.2, 0.62, 0.8), Color("8a6a44"))
+					box(root, Vector3(0.4, 0.14, 0.7), Vector3(e * 0.7, 0.3, 0.8), shade(DARK.lightened(0.2)))
+				box(root, Vector3(0.6, 0.1, 0.5), Vector3(-0.4, 0.95, 0.8), shade(MOSS))
+			"block":  # a broken wall, gold capping stones on top: flip over it
+				box(root, Vector3(2.2, 0.85, 0.5), Vector3(0, 0.68, 0.8), shade(Color("9a8f72")))
+				box(root, Vector3(0.7, 0.3, 0.52), Vector3(-0.6, 1.2, 0.8), shade(Color("9a8f72")))
+				box(root, Vector3(2.24, 0.1, 0.54), Vector3(0, 1.13, 0.8), GOLD).material_override = mat(GOLD, true)
+				box(root, Vector3(0.5, 0.12, 0.54), Vector3(0.5, 1.2, 0.8), shade(MOSS))
+			"beam":  # a low lintel hung with cloth: nowhere to go but under
 				for side in [-1, 1]:
-					box(root, Vector3(0.18, 1.7, 0.18), Vector3(side * 0.95, 1.1, 0.8), Color("6b4a2c"))
-				box(root, Vector3(2.2, 0.2, 0.2), Vector3(0, 1.75, 0.8), Color("8a6a44"))
+					box(root, Vector3(0.24, 1.6, 0.24), Vector3(side * 1.0, 1.05, 0.8), Color("6b4a2c"))
+				box(root, Vector3(2.4, 0.34, 0.34), Vector3(0, 1.72, 0.8), Color("8a6a44"))
+				for k in 5:
+					box(root, Vector3(0.22, 0.42, 0.06), Vector3(-0.72 + k * 0.36, 1.36, 0.8), Color("c0392b") if k % 2 == 0 else GOLD)
 
 	match kind:
 		"spike":
@@ -1325,6 +1362,7 @@ func intro() -> void:
 			await wait(0.8)
 	count("GO!", GOLD)
 	sfx.play("good")
+	quip(players[rng.randi_range(0, players.size() - 1)], "start")
 	await wait(0.5)
 
 
@@ -2277,6 +2315,7 @@ func take_turn(p: Dictionary) -> void:
 		if p.wounded == 0:
 			p.a.wounded = false
 			popup(p.a.position, "HEALED", Color("7dff9b"))
+			quip(p, "healed", 0.7)
 			burst(p.a.position + Vector3(0, 1.2, 0), Color("7dff9b"), 10, 3.0)
 			sfx.play("good", -8.0)
 		refresh_ui(p)
@@ -2286,6 +2325,19 @@ func take_turn(p: Dictionary) -> void:
 		refresh_ui(p)
 		await wait(0.9)
 		return
+	if rng.randf() < 0.2:  # a word from the front or the back of the race
+		var ahead := 0
+		var behind := 0
+		for q in players:
+			if q != p and active(q):
+				if q.pos > p.pos:
+					ahead += 1
+				elif q.pos < p.pos:
+					behind += 1
+		if ahead == 0 and behind > 0 and p.pos > 8:
+			quip(p, "lead")
+		elif behind == 0 and ahead > 0 and p.pos > 4:
+			quip(p, "last")
 	var again := true
 	while again and active(p):
 		again = false
@@ -2325,13 +2377,25 @@ func take_turn(p: Dictionary) -> void:
 	await wait(1.0)  # hold on this runner so the result can sink in before the camera moves on
 
 
-func quip(p: Dictionary, key: String, chance := 1.0, secs := 2.2) -> void:
-	# a runner says something, in a speech bubble over their head
+func quip(p: Dictionary, key: String, chance := 1.0, secs := 2.8) -> void:
+	# A runner says something, in a speech bubble over their head. A bubble is
+	# always left up long enough to read: a new line that arrives too soon
+	# waits its turn instead of wiping the last one out.
 	if rng.randf() > chance or not LINES.has(key) or not is_instance_valid(p.a):
 		return
 	var lines: Array = LINES[key]
-	bubble_lbl.text = lines[rng.randi_range(0, lines.size() - 1)]
-	bubble_who = p.a
+	var text: String = lines[rng.randi_range(0, lines.size() - 1)]
+	if bubble.visible and clock - bubble_start < 1.5:
+		if bubble_q.size() < 2:
+			bubble_q.append([p.a, text, secs])
+		return
+	_show_bubble(p.a, text, secs)
+
+
+func _show_bubble(who: Node3D, text: String, secs: float) -> void:
+	bubble_lbl.text = text
+	bubble_who = who
+	bubble_start = clock
 	bubble_until = clock + secs
 	bubble.size = Vector2.ZERO  # shrink to fit the new line
 	bubble.visible = true
@@ -2565,19 +2629,18 @@ func move(p: Dictionary, n: int) -> void:
 
 
 func stride(p: Dictionary, nxt: int) -> void:
-	# One step to the next slab. Hurdles are cleared with a parkour move, and
-	# now and then a runner throws in a flourish just for style.
+	# One step to the next slab. Hurdles are cleared with a parkour move.
 	var root: Node3D = p.a
+	# parkour happens only where there is something to clear, so the move always has a visible reason
 	var style := ""
 	if hurdles.has(nxt):
-		style = "slide" if hurdles[nxt] == "beam" else ["vault", "flip"][rng.randi_range(0, 1)]
-	elif rng.randf() < 0.12:
-		style = ["roll", "spin", "long"][rng.randi_range(0, 2)]
+		style = "slide" if hurdles[nxt] == "beam" else ("vault" if hurdles[nxt] == "log" else "flip")
 	var dy: float = spot(p, nxt).y - root.position.y
 	if dy > 0.9:  # a ledge: spring up, hands on top, swing the legs over
 		root.pose = "vault"
 		sfx.play("jump", -8.0)
 		popup(root.position, "CLIMB!", Color("ffe066"))
+		quip(p, "climb", 0.4)
 		await hop(root, spot(p, nxt), 0.55 + dy * 0.25, 0.5)
 		root.pose = ""
 		squash(root)
@@ -2585,6 +2648,7 @@ func stride(p: Dictionary, nxt: int) -> void:
 		burst(root.position, STONE.lightened(0.25), 6, 2.0)
 		return
 	if dy < -0.9:  # a drop: leap off and land heavily
+		quip(p, "drop", 0.4)
 		root.air = true
 		sfx.play("jump", -9.0)
 		await hop(root, spot(p, nxt), 0.55, 0.45)
@@ -2599,29 +2663,49 @@ func stride(p: Dictionary, nxt: int) -> void:
 		# it lifts more when the next slab is a step up
 		await hop(root, spot(p, nxt), 0.12 + maxf(0.0, dy) * 0.55 + (0.1 if dy < -0.2 else 0.0), 0.3 + absf(dy) * 0.08)
 		return
+	# Parkour, in beats that can be followed: run up to the obstacle, coil,
+	# then the move itself in slow motion and seen from the side, with a trail,
+	# and a clean landing. The move is named as it starts.
 	root.yaw_goal = NAN
 	var yaw: float = yaws[p.pos]
-	var dur: float = {"vault": 0.34, "flip": 0.44, "slide": 0.36, "roll": 0.38, "spin": 0.42, "long": 0.42}[style]
-	root.pose = {"vault": "vault", "flip": "tuck", "slide": "slide", "roll": "tuck", "spin": "cheer", "long": ""}[style]
-	root.air = style == "long"
-	if style != "slide" and style != "roll":
-		sfx.play("jump", -9.0)
-	spotlight(p, 0.42)
-	popup(root.position, {"vault": "VAULT!", "flip": "FRONT FLIP!", "slide": "SLIDE!", "roll": "ROLL!", "spin": "SPIN!", "long": "LONG JUMP!"}[style], Color("ffe066"))
+	var from := root.position
+	var to := spot(p, nxt)
+	var edge := from.lerp(to, 0.28)
+	var run_up := root.create_tween()
+	run_up.tween_property(root, "position", edge, 0.14)
+	await run_up.finished
+	root.run = false
+	root.pose = "crouch"
+	spotlight(p, 0.45, 4.4)
+	var label: String = {"vault": "VAULT!", "flip": "FRONT FLIP!", "slide": "SLIDE!"}[style]
+	announce(label, Color("ffe066"))
+	await wait(0.2)
+	root.pose = {"vault": "vault", "flip": "tuck", "slide": "slide"}[style]
+	sfx.play("whoosh", -3.0, 0.8)
+	var col: Color = p.color
+	var dur: float = {"vault": 0.62, "flip": 0.8, "slide": 0.62}[style]
 	var tw := create_tween()
-	tw.tween_method(_parkour.bind(root, root.position, spot(p, nxt), style, yaw), 0.0, 1.0, dur)
+	tw.tween_method(func(t: float) -> void:
+		_parkour(t, root, edge, to, style, yaw)
+		if Engine.get_frames_drawn() % 2 == 0:  # a streak of the runner's colour marks the path taken
+			burst(root.position + Vector3(0, 0.9, 0), col.lightened(0.3), 2, 0.6), 0.0, 1.0, dur)
 	await tw.finished
 	root.pose = ""
-	root.air = false
 	root.rotation = Vector3(0, yaw, 0)
-	root.position = spot(p, nxt)
-	if style == "slide" or style == "roll":
-		burst(root.position, STONE.lightened(0.25), 8, 2.5)
+	root.position = to
+	if style == "slide":
+		burst(root.position, STONE.lightened(0.25), 14, 3.0)
+		sfx.play("land", -6.0, 1.3)
 	else:
-		sfx.play("land", -6.0)
+		sfx.play("land", -3.0)
 		squash(root)
-	if hurdles.has(nxt) and rng.randf() < 0.6:
+		burst(root.position, STONE.lightened(0.25), 10, 3.0)
+	await wait(0.18)
+	if rng.randf() < 0.6:
 		await celebrate(p)
+	else:
+		quip(p, "parkour", 0.5)
+	root.run = true
 	spot_off()
 
 
@@ -2662,7 +2746,9 @@ func fireworks(at: Vector3) -> void:
 
 
 func _parkour(t: float, root: Node3D, from: Vector3, to: Vector3, style: String, yaw: float) -> void:
-	var arc: float = {"vault": 0.75, "flip": 1.4, "slide": 0.0, "roll": 0.25, "spin": 1.0, "long": 1.5, "somersault": 2.3}[style]
+	# vault: hands down on the log, hips over. flip: a high forward somersault
+	# over the wall. slide: lying back, feet first, under the beam.
+	var arc: float = {"vault": 1.05, "flip": 2.0, "slide": 0.0, "roll": 0.25, "spin": 1.0, "long": 1.5, "somersault": 2.3}[style]
 	var at := from.lerp(to, t) + Vector3(0, sin(t * PI) * arc, 0)
 	match style:
 		"flip", "roll", "somersault":
@@ -2670,9 +2756,11 @@ func _parkour(t: float, root: Node3D, from: Vector3, to: Vector3, style: String,
 			# turn about the body's middle, not the feet
 			at += Vector3(0, 0.9, 0) - root.basis * Vector3(0, 0.9, 0)
 		"vault":
-			root.rotation = Vector3(-sin(t * PI) * 0.85, yaw, 0)
+			root.rotation = Vector3(-sin(t * PI) * 1.25, yaw, 0)
+			at += Vector3(0, 0.5, 0) - root.basis * Vector3(0, 0.5, 0)
 		"slide":
-			root.rotation = Vector3(sin(t * PI) * 1.05, yaw, 0)
+			root.rotation = Vector3(sin(t * PI) * 1.3, yaw, 0)
+			at.y -= sin(t * PI) * 0.12
 		"spin":
 			root.rotation = Vector3(0, yaw + TAU * t, 0)
 	root.position = at
@@ -2821,6 +2909,7 @@ func collect(p: Dictionary) -> void:
 		pickups.erase(p.pos)
 		kinds[p.pos] = ""
 		earn(p, n)
+		quip(p, "diamond" if n == 5 else "coin", 1.0 if n == 5 else 0.25)
 
 
 func _swing(t: float, mk: Node3D, a: Vector3, b: Vector3, pivot: Vector3, rider: Node3D, hold: Vector3) -> void:
@@ -2846,6 +2935,7 @@ func banana_rescue(p: Dictionary) -> void:
 	while d < END - 1 and d < i + 6 and kinds[d] != "" and kinds[d] != "coin" and kinds[d] != "diamond":
 		d += 1
 	say("A gorilla swung in and carried %s to safety" % obj(p))
+	quip(p, "banana")
 	announce("BANANA!", Color("ffe066"))
 	slow_to = 0.6  # slowed, but the camera stays wide: a close-up would be all gorilla
 	sfx.play("gorilla", 2.0)
@@ -2977,6 +3067,7 @@ func hurt(p: Dictionary) -> String:
 		p.shield = false
 		sfx.play("good")
 		popup(p.a.position, "BLOCKED!", Color("5fe0ff"))
+		quip(p, "blocked")
 		burst(p.a.position + Vector3(0, 1, 0), Color("5fe0ff"), 14, 4.0)
 		refresh_ui()
 		await wait(0.4)
@@ -2992,6 +3083,12 @@ func hurt(p: Dictionary) -> String:
 	p.a.pose = "hit"
 	p.a.express("pain", 1.0)
 	quip(p, "hit", 0.6)
+	var others: Array[Dictionary] = []
+	for q in players:
+		if q != p and active(q):
+			others.append(q)
+	if not others.is_empty():  # someone else enjoys it
+		quip(others[rng.randi_range(0, others.size() - 1)], "taunt", 0.35)
 	burst(p.a.position + Vector3(0, 1.5, 0), Color("e2463a"), 18, 5.0)   # the lost heart shatters
 	burst(p.a.position + Vector3(0, 1.5, 0), Color("ff9aa0"), 8, 3.0)
 	hud_lose(p, "heart")
@@ -3184,6 +3281,7 @@ func rope_cross(p: Dictionary) -> void:
 	root.express("")
 	p.pos = d
 	announce("+%d SLABS" % (d - from_i), Color("7dff9b"))
+	quip(p, "rope_done", 0.7)
 	await hop(root, spot(p, d), 0.4, 0.25)
 	root.rotation = Vector3(0, yaws[d], 0)
 	squash(root)
@@ -3247,6 +3345,7 @@ func snake_strike(p: Dictionary) -> void:
 	burst(root.position, STONE.lightened(0.2), 14, 3.5)
 	stars(root)
 	root.express("ko", 1.3)
+	quip(p, "snake_done", 0.8)
 	refresh_ui()
 	await wait(0.7)
 
@@ -3344,6 +3443,7 @@ func mystery(p: Dictionary) -> void:
 		"elephant":
 			var d: int = mini(i + 4, END - 1)
 			say("A temple elephant carried %s ahead to slab %d" % [obj(p), d])
+			quip(p, "elephant")
 			announce("+%d SLABS" % (d - i), Color("7dff9b"))
 			sfx.play("trumpet")
 			a.roar = 1.2  # trunk up as it trumpets
@@ -3363,6 +3463,7 @@ func mystery(p: Dictionary) -> void:
 			await hop(root, spot(p, d), 0.9, 0.35)
 		"parrot":
 			say("A parrot brought %s a diamond: +5 coins" % obj(p))
+			quip(p, "parrot")
 			sfx.play("chirp", 0.0, 0.8)
 			var tw := create_tween()
 			tw.tween_method(_circle.bind(a, root), 0.0, TAU * 2.0, 1.2)
@@ -3379,6 +3480,7 @@ func mystery(p: Dictionary) -> void:
 				var lost: int = mini(4, p.coins)
 				p.coins -= lost
 				say("A monkey stole %d coins from %s" % [lost, obj(p)])
+				quip(p, "monkey")
 				announce("-%d COINS" % lost, Color("ff6b5e"))
 				burst(root.position + Vector3(0, 1, 0), GOLD, 10, 4.0)
 				sfx.play("bad", -4.0)
@@ -3394,6 +3496,7 @@ func mystery(p: Dictionary) -> void:
 			var lid: Node3D = a.get_meta("lid")
 			lid.create_tween().tween_property(lid, "rotation:x", 1.9, 0.3).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 			sfx.play("good")
+			quip(p, "chest")
 			burst(a.position + Vector3(0, 0.8, 0), GOLD, 24, 5.0)
 			var prize := rng.randi_range(0, 2)
 			if rng.randf() < 0.13 and p.banana == 0:  # rare
@@ -3541,6 +3644,7 @@ func tiger_attack(p: Dictionary) -> void:
 			refresh_ui()
 		root.run = false
 		root.turn_to(yaws[d])
+		quip(p, "tiger_done", 0.8)
 		tg.roar = 1.4  # pulls up and snarls after them
 		sfx.play("growl", -4.0)
 		await wait(0.6)
@@ -3600,6 +3704,8 @@ func update_sky(delta: float) -> void:
 		rain = rng.randf() < 0.4
 		if rain != before:
 			note("Rain rolls in over the forest" if rain else "The rain clears")
+			if rain and not players.is_empty() and not in_lobby:
+				quip(players[rng.randi_range(0, players.size() - 1)], "rain", 0.8)
 	if rain_k > 0.6:
 		thunder_in -= delta
 		if thunder_in <= 0.0:
@@ -3610,6 +3716,8 @@ func update_sky(delta: float) -> void:
 	if dark != was_night:
 		was_night = dark
 		note("Night falls. Torches out!" if dark else "Dawn breaks over the temple")
+		if not players.is_empty() and not in_lobby:
+			quip(players[rng.randi_range(0, players.size() - 1)], "night" if dark else "dawn", 0.8)
 	for p in players:
 		p.a.night = dark
 
@@ -3649,6 +3757,7 @@ func fight(p: Dictionary, q: Dictionary) -> void:
 	var pct := roundi(chance * 100.0)
 	say("%s %d%%  vs  %s %d%%" % ["YOU" if not p.bot else p.name, pct, "YOU" if not q.bot else q.name, 100 - pct])
 	announce("FIGHT!", Color("ff6b5e"))
+	quip(p, "fight_start")
 	sfx.play("gong", -2.0)
 	a.look_at(Vector3(b.position.x, a.position.y, b.position.z))
 	b.look_at(Vector3(a.position.x, b.position.y, a.position.z))
@@ -4381,7 +4490,7 @@ func _process(delta: float) -> void:
 				break
 	# the speech bubble stays over its speaker's head
 	if bubble.visible:
-		if clock > bubble_until or not is_instance_valid(bubble_who) or not bubble_who.visible:
+		if clock > bubble_until or not is_instance_valid(bubble_who):
 			bubble.visible = false
 		else:
 			var head_at: Vector3 = bubble_who.global_position + Vector3(0, 2.45, 0)
@@ -4390,8 +4499,14 @@ func _process(delta: float) -> void:
 			else:
 				var vis := get_viewport().get_visible_rect().size
 				var at := cam.unproject_position(head_at) * (vis / Vector2(view.size))
+				if at.x < -40.0 or at.x > vis.x + 40.0 or at.y < 0.0 or at.y > vis.y:  # speaker is off screen: no stray bubble in a corner
+					bubble.visible = false
 				bubble.position = Vector2(clampf(at.x - bubble.size.x / 2.0, 8.0, vis.x - bubble.size.x - 8.0), maxf(at.y - bubble.size.y - 26.0, 8.0))
 				bubble.queue_redraw()
+	if not bubble_q.is_empty() and (not bubble.visible or clock - bubble_start >= 1.5):
+		var nxt_line: Array = bubble_q.pop_front()
+		if is_instance_valid(nxt_line[0]):
+			_show_bubble(nxt_line[0], nxt_line[1], nxt_line[2])
 	# race-bar pins glide towards where their runners are
 	var gliding := false
 	for p in players:
@@ -4510,7 +4625,7 @@ func _process(delta: float) -> void:
 	cam_dir = Vector3(sin(cam_yaw), 0, cos(cam_yaw))
 	var z := smoothstep(0.0, 1.0, zoom_k)
 	var side := cam_dir.cross(Vector3.UP)
-	cam.position = cam_base - cam_dir * lerpf(7.4, 4.4, z) + side * 1.9 * z + Vector3(0, lerpf(6.6, 2.5, z), 0)
+	cam.position = cam_base - cam_dir * lerpf(7.4, 4.4 - (zoom_side - 1.9) * 0.75, z) + side * zoom_side * z + Vector3(0, lerpf(6.6, 2.5, z), 0)
 	cam.look_at((cam_base + cam_dir * 5.5 + Vector3(0, 0.6, 0)).lerp(cam_base + Vector3(0, 1.15, 0), z))
 	cam.fov = lerpf(62.0, 50.0, z)
 	cam.h_offset = rng.randf_range(-1, 1) * shake_amt
