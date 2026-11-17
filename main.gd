@@ -28,6 +28,16 @@ const SUPPORT_URL := "https://buymeacoffee.com/vrkrishna9e"
 
 # What runners say, comic-strip style. One line is picked at random.
 const LINES := {
+	"exact_win": ["A %d! Exactly what I needed!", "Just enough! The treasure is mine!", "That is the one! Straight to the gold!"],
+	"lucky_low": ["Only a %d... straight onto a rope! Ha!", "Small roll, big luck!", "Who needs a six?", "A %d never looked so good!"],
+	"unlucky_high": ["A %d! Yes! ...wait. Oh no.", "Big roll, straight into trouble!", "Of all the slabs, THAT one?!", "A %d, and look where it puts me!"],
+	"so_close": ["So close! Just a few more!", "Almost there... come on, dice!", "I can smell the gold from here!"],
+	"jealous": ["Lucky %s! That should be MY rope!", "Oh come on, %s gets everything!", "Unfair! I want one too!", "Enjoy it while it lasts, %s!", "Pure luck, %s. Pure luck."],
+	"sympathy": ["Ouch. You okay, %s?", "That looked rough, %s.", "Hang in there, %s!"],
+	"overtake": ["Coming through, %s!", "See you at the gate, %s!", "On your left, %s!", "Bye bye, %s!"],
+	"overtaken": ["Hey! Get back here, %s!", "That spot was MINE, %s!", "Not for long, %s!", "I will remember that, %s!"],
+	"rival_won": ["Nooo! %s got the gold!", "Well run, %s. Well run.", "Next time, %s. Next time.", "Fine. Congratulations, %s."],
+	"fight_reply": ["You and what army?", "Bring it on!", "I was here first!", "Try me!", "Oh, it is ON!"],
 	"start": ["Last one there is tiger food!", "Treasure, here we come!", "Try to keep up!", "May the best explorer win. Me.", "Nobody touch my gold!"],
 	"rope": ["Yes! A rope! Let's go!", "A rope! My lucky day!", "Shortcut! Hold tight!", "Finally, some luck!", "Going up! See you later!", "I love ropes. Ropes love me."],
 	"rope_done": ["Easy as that!", "Did you see that swing?!", "And they said I skipped arm day.", "Shortcut taken. Thank you, rope."],
@@ -42,7 +52,7 @@ const LINES := {
 	"boulder": ["RUN! The boulder!", "It is right behind us!", "Faster! FASTER!", "Roll high, or we are pancakes!", "Do NOT look back. I looked back.", "That rock has it in for me!", "Move, move, MOVE!"],
 	"boulder_hit": ["Oof! Flattened!", "That... was a big rock.", "I saw stars. And a boulder.", "Flat as a dosa.", "I am fine. Everything hurts."],
 	"hit": ["Ouch! That hurt!", "My poor bones!", "I felt that one.", "Not my best moment.", "That is going to bruise.", "Who designed this place?!", "I need a holiday."],
-	"taunt": ["Ha! Did you see that?!", "Ooh, that looked painful.", "Thanks for testing that for us!", "Better you than me!", "Need a hand? No? Good."],
+	"taunt": ["Ha! Did you see that, %s?!", "Ooh, that looked painful, %s.", "Thanks for testing that for us, %s!", "Better you than me!", "Need a hand, %s? No? Good.", "Smooth move, %s!", "Watch your step, %s! Too late."],
 	"six": ["A SIX! Yes! Again!", "Now THAT is a roll!", "The dice love me!", "Six! Keep them coming!", "Boom! Maximum!"],
 	"high": ["Good roll! Go go go!", "That will do nicely!", "On our way!", "Now we are moving!", "I will take it!"],
 	"one": ["A ONE?! Come on, dice!", "One. Just... one.", "Who rolled that? You did!", "My grandma rolls better!", "Were you even trying?!", "One step. Thrilling.", "The dice hate us. Or just you."],
@@ -2364,7 +2374,6 @@ func take_turn(p: Dictionary) -> void:
 		var n: int = await roll(p)
 		if n == 0:
 			break
-		await react(p, n)
 		var steps := n
 		var lead := 0
 		for q in players:
@@ -2378,10 +2387,18 @@ func take_turn(p: Dictionary) -> void:
 			burst(p.a.position + Vector3(0, 1, 0), Color("5fe0ff"), 12, 4.0)
 			sfx.play("good", -8.0, 1.3)
 			quip(p, "tailwind", 0.6)
+		var spoke: bool = await react(p, n, steps)
+		var from_pos: int = p.pos
 		var trail := show_trail(p, steps)
-		await wait(preview(p, steps))
+		await wait(preview(p, steps, spoke))
 		p.a.express("")
 		await move(p, steps)
+		if active(p) and p.pos > from_pos and not (kinds[p.pos] in HARMFUL):  # anyone passed on the way hears about it, and answers back
+			for q in players:
+				if q != p and active(q) and q.pos > from_pos and q.pos < p.pos:
+					quip(p, "overtake", 0.45, 2.8, disp(q))
+					quip(q, "overtaken", 0.55, 2.8, disp(p))
+					break
 		if is_instance_valid(trail):
 			trail.queue_free()
 		if active(p):
@@ -2396,7 +2413,22 @@ func take_turn(p: Dictionary) -> void:
 	await wait(1.0)  # hold on this runner so the result can sink in before the camera moves on
 
 
-func quip(p: Dictionary, key: String, chance := 1.0, secs := 2.8) -> void:
+func disp(p: Dictionary) -> String:
+	# how one runner names another: by colour
+	return "Red" if not p.bot else p.name.capitalize()
+
+
+func rival_says(about: Dictionary, key: String, chance := 1.0) -> void:
+	# the nearest other runner comments on what just happened to this one
+	var who: Dictionary = {}
+	for q in players:
+		if q != about and active(q) and (who.is_empty() or absi(q.pos - about.pos) < absi(who.pos - about.pos)):
+			who = q
+	if not who.is_empty():
+		quip(who, key, chance, 2.8, disp(about))
+
+
+func quip(p: Dictionary, key: String, chance := 1.0, secs := 2.8, arg: Variant = null) -> void:
 	# A runner says something, in a speech bubble over their head. A bubble is
 	# always left up long enough to read: a new line that arrives too soon
 	# waits its turn instead of wiping the last one out.
@@ -2404,8 +2436,12 @@ func quip(p: Dictionary, key: String, chance := 1.0, secs := 2.8) -> void:
 		return
 	var lines: Array = LINES[key]
 	var text: String = lines[rng.randi_range(0, lines.size() - 1)]
+	if arg != null and "%" in text:  # a number or a name goes into the line
+		text = text % arg
+	else:
+		text = text.replace(", %s", "").replace(" %s", "").replace("%d", "roll")
 	if bubble.visible and clock - bubble_start < 1.5:
-		if bubble_q.size() < 2:
+		if bubble_q.size() < 3:
 			bubble_q.append([p.a, text, secs])
 		return
 	_show_bubble(p.a, text, secs)
@@ -2429,33 +2465,55 @@ func face_player(p: Dictionary) -> void:
 	p.a.turn_to(atan2(-to_cam.x, -to_cam.z))
 
 
-func react(p: Dictionary, n: int) -> void:
-	# After the die lands the runner turns to the player and shows what they
-	# think of it: delight at a big roll, despair or a tantrum at a small one,
-	# and now and then a word about whose fault it is.
-	if n >= 3 and n <= 4:
-		return
-	if p.bot and n != 1 and n != 6 and rng.randf() < 0.5:
-		return
+func react(p: Dictionary, n: int, steps: int) -> bool:
+	# After the die lands the runner turns to the player and reacts to what the
+	# roll LEADS TO, not just the number: a 1 that reaches a rope or the gate is
+	# good news, a 6 that lands on a cobra is not. Returns true if they spoke.
+	var dest := mini(p.pos + steps, END)
+	var kind: String = kinds[dest]
+	var bad: bool = kind in HARMFUL and not p.hit.has(dest)
+	var good: bool = dest >= END or kind == "rope"
+	var key := ""
+	var up := false
+	if dest >= END:
+		key = "exact_win" if n <= 3 else ""
+		up = true
+	elif good:
+		key = "lucky_low" if n <= 2 else ""
+		up = true
+	elif bad:
+		key = "unlucky_high" if n >= 5 else ""
+	elif kind == "mystery":
+		return false  # the card and their curiosity cover it
+	elif n >= 5:
+		key = "six" if n == 6 else "high"
+		up = true
+	elif n <= 2:
+		key = "so_close" if END - p.pos <= 8 else ("one" if n == 1 else "low")
+	else:
+		return false
+	if p.bot and key in ["high", "low"] and rng.randf() < 0.5:
+		return false
 	var root: Node3D = p.a
 	face_player(p)
 	await wait(0.28)
-	if n >= 5:
+	if up:
 		root.express("happy")
-		root.pose = "cheer" if n == 6 else "thumb"
-		quip(p, "six" if n == 6 else "high")
-		if n == 6:
+		root.pose = "cheer" if (n == 6 or dest >= END) else "thumb"
+		if n == 6 or dest >= END:
 			await hop(root, root.position, 0.6, 0.3)
 			burst(root.position + Vector3(0, 1.6, 0), GOLD, 10, 4.0)
 	else:
-		root.express("angry" if rng.randf() < 0.5 else "pain")
+		root.express("scared" if bad else ("angry" if rng.randf() < 0.5 else "pain"))
 		root.pose = ["facepalm", "shrug", "stomp", "sad"][rng.randi_range(0, 3)]
-		quip(p, "one" if n == 1 else "low")
-	await wait(0.95)
+	if key != "":
+		quip(p, key, 1.0, 2.8, n)
+	await wait(0.95 if key != "" else 0.6)
 	root.pose = ""
 	root.express("")
 	root.turn_to(yaws[clampi(p.pos, 0, END)])
 	await wait(0.15)
+	return key != ""
 
 
 func show_card(icon_id: String, title_text: String, sub: String, c: Color, secs: float) -> void:
@@ -2478,7 +2536,7 @@ func show_card(icon_id: String, title_text: String, sub: String, c: Color, secs:
 	card_tw.tween_callback(func() -> void: card.visible = false)
 
 
-func preview(p: Dictionary, n: int) -> float:
+func preview(p: Dictionary, n: int, quiet := false) -> float:
 	# Before anyone moves, say plainly what this roll leads to: a card with the
 	# slab's picture and effect, and the runner's face reacting. Returns how
 	# long to hold before moving.
@@ -2492,37 +2550,45 @@ func preview(p: Dictionary, n: int) -> float:
 	var red := Color("ff5a4a")
 	if dest >= END:
 		show_card("trophy", "%s: THE TREASURE!" % who, "This roll reaches the gate", GOLD, 1.3)
-		quip(p, "treasure")
+		if not quiet:
+			quip(p, "treasure")
 		p.a.express("happy")
 	elif kind in HARMFUL and p.hit.has(dest):
 		show_card("", "%s: A KNOWN TRAP" % who, "Caught once already: dodged this time", Color("7dff9b"), 1.2)
 	elif kind == "rope":
 		show_card("s_rope", "%s: ROPE!" % who, "Swing ahead %d slabs" % (rope_to[dest] - dest), Color("3fe07a"), 1.3)
-		quip(p, "rope")
+		if not quiet:
+			quip(p, "rope")
 		p.a.express("happy")
 	elif kind == "snake":
 		show_card("s_snake", "%s: COBRA!" % who, "Thrown back %d slabs" % (dest - snake_to[dest]), red, 1.4)
-		quip(p, "snake")
+		if not quiet:
+			quip(p, "snake")
 		p.a.express("scared")
 	elif kind == "tiger":
 		show_card("s_tiger", "%s: TIGER!" % who, "Lose a life and flee back", red, 1.4)
-		quip(p, "tiger")
+		if not quiet:
+			quip(p, "tiger")
 		p.a.express("scared")
 	elif kind == "crumble":
 		show_card("s_crumble", "%s: CRACKED SLAB!" % who, "It gives way: lose a life", Color("ff9a2e"), 1.4)
-		quip(p, "crumble")
+		if not quiet:
+			quip(p, "crumble")
 		p.a.express("scared")
 	elif kind == "spike":
 		show_card("s_spike", "%s: SPIKES!" % who, "Tap in time to jump them", red, 1.3)
-		quip(p, "spike")
+		if not quiet:
+			quip(p, "spike")
 		p.a.express("scared")
 	elif kind == "mystery":
 		show_card("s_mystery", "%s: MYSTERY" % who, "An animal or a treasure chest", Color("b06aff"), 1.2)
-		quip(p, "mystery")
+		if not quiet:
+			quip(p, "mystery")
 		p.a.express("wow")
 	elif spikes:
 		show_card("s_spike", "%s: SPIKES ON THE WAY" % who, "Tap in time to jump them", red, 1.2)
-		quip(p, "spike")
+		if not quiet:
+			quip(p, "spike")
 		p.a.express("scared")
 	else:
 		return 0.4
@@ -2636,6 +2702,7 @@ func move(p: Dictionary, n: int) -> void:
 		root.pose = "cheer"
 		face_player(p)
 		quip(p, "win", 1.0, 3.0)
+		rival_says(p, "rival_won")
 		fireworks(root.position)
 		shake(0.3)
 		if finished.size() == 1:
@@ -3102,12 +3169,7 @@ func hurt(p: Dictionary) -> String:
 	p.a.pose = "hit"
 	p.a.express("pain", 1.0)
 	quip(p, "hit", 0.6)
-	var others: Array[Dictionary] = []
-	for q in players:
-		if q != p and active(q):
-			others.append(q)
-	if not others.is_empty():  # someone else enjoys it
-		quip(others[rng.randi_range(0, others.size() - 1)], "taunt", 0.35)
+	rival_says(p, "taunt" if rng.randf() < 0.8 else "sympathy", 0.6)  # someone else enjoys it, or winces
 	burst(p.a.position + Vector3(0, 1.5, 0), Color("e2463a"), 18, 5.0)   # the lost heart shatters
 	burst(p.a.position + Vector3(0, 1.5, 0), Color("ff9aa0"), 8, 3.0)
 	hud_lose(p, "heart")
@@ -3301,6 +3363,7 @@ func rope_cross(p: Dictionary) -> void:
 	p.pos = d
 	announce("+%d SLABS" % (d - from_i), Color("7dff9b"))
 	quip(p, "rope_done", 0.7)
+	rival_says(p, "jealous", 0.6)
 	await hop(root, spot(p, d), 0.4, 0.25)
 	root.rotation = Vector3(0, yaws[d], 0)
 	squash(root)
@@ -3463,6 +3526,7 @@ func mystery(p: Dictionary) -> void:
 			var d: int = mini(i + 4, END - 1)
 			say("A temple elephant carried %s ahead to slab %d" % [obj(p), d])
 			quip(p, "elephant")
+			rival_says(p, "jealous", 0.45)
 			announce("+%d SLABS" % (d - i), Color("7dff9b"))
 			sfx.play("trumpet")
 			a.roar = 1.2  # trunk up as it trumpets
@@ -3516,6 +3580,7 @@ func mystery(p: Dictionary) -> void:
 			lid.create_tween().tween_property(lid, "rotation:x", 1.9, 0.3).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 			sfx.play("good")
 			quip(p, "chest")
+			rival_says(p, "jealous", 0.45)
 			burst(a.position + Vector3(0, 0.8, 0), GOLD, 24, 5.0)
 			var prize := rng.randi_range(0, 2)
 			if rng.randf() < 0.13 and p.banana == 0:  # rare
@@ -3777,6 +3842,7 @@ func fight(p: Dictionary, q: Dictionary) -> void:
 	say("%s %d%%  vs  %s %d%%" % ["YOU" if not p.bot else p.name, pct, "YOU" if not q.bot else q.name, 100 - pct])
 	announce("FIGHT!", Color("ff6b5e"))
 	quip(p, "fight_start")
+	quip(q, "fight_reply")
 	sfx.play("gong", -2.0)
 	a.look_at(Vector3(b.position.x, a.position.y, b.position.z))
 	b.look_at(Vector3(a.position.x, b.position.y, a.position.z))
@@ -3937,6 +4003,7 @@ func boulder_turn() -> void:
 		await hitstop(0.12)
 		burst(root.position + Vector3(0, 0.8, 0), v.color, 26, 7.0)
 		say("The boulder hit %s!" % obj(v))
+		rival_says(v, "taunt", 0.6)
 		var was: int = v.pos
 		var res: String = await hurt(v)
 		if active(v) and v.pos == was:  # still there: bowled along and out in front of it
