@@ -25,6 +25,15 @@ void fragment() {
 	float l = dot(a, vec3(0.3, 0.59, 0.11));
 	ALBEDO = mix(vec3(l), a, sat) * tint;  // scenery is muted so the path and players stand out
 	ROUGHNESS = 1.0;
+	// anything close to the camera dissolves, so trunks and leaves never block the view
+	float near = length(VERTEX);
+	if (near < 6.0) {
+		vec2 px = floor(FRAGCOORD.xy);
+		float th = fract(52.9829189 * fract(dot(px, vec2(0.06711056, 0.00583715))));
+		if (clamp((near - 2.5) / 3.5, 0.0, 1.0) < th) {
+			discard;
+		}
+	}
 }
 """
 

@@ -15,6 +15,11 @@ var night := false # carries a lit torch
 var yaw_goal := NAN  # set by turn_to(): heading being turned towards
 var look_up := false # head tilted back (eyeing a rope overhead)
 var wounded := false # healing: bandaged head, a little hunched
+var mood := ""       # face: "", angry, scared, happy, pain, ko
+var eyes: Array[MeshInstance3D] = []
+var brows: Array[MeshInstance3D] = []
+var mouth: MeshInstance3D
+var emote: Label3D
 var bandage: Node3D
 var shadow: MeshInstance3D
 var floor_y := 0.0   # height of the ground under the runner, where the shadow lies
@@ -102,7 +107,20 @@ func setup(m, color: Color, tag := "") -> void:
 	main.box(head, Vector3(0.44, 0.42, 0.42), Vector3.ZERO, skin)
 	main.box(head, Vector3(0.46, 0.3, 0.1), Vector3(0, 0.02, 0.19), Color("2b1d14"))
 	for side in [-1, 1]:
-		main.box(head, Vector3(0.07, 0.09, 0.04), Vector3(side * 0.11, 0.02, -0.22), Color("1a1410"))
+		eyes.append(main.box(head, Vector3(0.07, 0.09, 0.04), Vector3(side * 0.11, 0.02, -0.22), Color("1a1410")))
+		brows.append(main.box(head, Vector3(0.13, 0.035, 0.04), Vector3(side * 0.11, 0.11, -0.225), Color("2b1d14")))
+	mouth = main.box(head, Vector3(0.1, 0.03, 0.04), Vector3(0, -0.11, -0.225), Color("5a2a1c"))
+	# comic mark that pops over the head with a change of mood: "!!", "@#!", "X_X"
+	emote = Label3D.new()
+	emote.font = main.ui_font
+	emote.font_size = 50
+	emote.outline_size = 18
+	emote.pixel_size = 0.008
+	emote.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	emote.no_depth_test = true
+	emote.position = Vector3(0.62, 1.95, 0)  # beside the head, clear of the name tag
+	emote.visible = false
+	add_child(emote)
 	# bandage round the head, shown only while healing
 	bandage = Node3D.new()
 	head.add_child(bandage)
@@ -179,6 +197,24 @@ func setup(m, color: Color, tag := "") -> void:
 func add_strand(node: Node3D, local: Vector3, n: int, seg: float, size: Vector2, material: Material, out: Vector3, wind_k: float, collide: bool) -> void:
 	var s := Strand.new(self, n, seg, size, material, global_position + local)
 	strands.append({"s": s, "node": node, "local": local, "out": out, "w": wind_k, "collide": collide})
+
+
+func express(m: String, secs := 0.0) -> void:
+	# Change the face, and pop a comic mark over the head. With secs, it wears off.
+	mood = m
+	var mark: Array = {"angry": ["@#!", Color("ff5a3a")], "scared": ["!!", Color("ffe066")], "happy": ["HA!", Color("7dff9b")],
+		"pain": ["OW!", Color("ff8a7a")], "ko": ["X_X", Color("d8d8ff")], "wow": ["!?", Color("ffe066")]}.get(m, ["", Color.WHITE])
+	emote.visible = mark[0] != ""
+	if emote.visible:
+		emote.text = mark[0]
+		emote.modulate = mark[1]
+		emote.scale = Vector3.ONE * 0.2
+		create_tween().tween_property(emote, "scale", Vector3.ONE, 0.2).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	if secs > 0.0:
+		var mine := m
+		get_tree().create_timer(secs).timeout.connect(func() -> void:
+			if mood == mine:
+				express(""))
 
 
 func turn_to(yaw: float) -> void:
@@ -313,6 +349,40 @@ func _process(delta: float) -> void:
 		shoulders[i].rotation.x = lerpf(shoulders[i].rotation.x, arm, lk)
 		elbows[i].rotation.x = lerpf(elbows[i].rotation.x, elbow, lk)
 		shoulders[i].rotation.z = lerpf(shoulders[i].rotation.z, side * (0.25 if air or hang else 0.0), k)
+
+	# ---- face
+	var bz := 0.0   # brow tilt (inner ends down = angry)
+	var by := 0.11  # brow height
+	var ey := Vector3.ONE
+	var ms := Vector3.ONE
+	match mood:
+		"angry":
+			bz = 0.55
+			by = 0.085
+			ms = Vector3(1.5, 2.0, 1.0)
+		"scared", "wow":
+			bz = -0.35
+			by = 0.15
+			ey = Vector3(1.3, 1.7, 1.0)
+			ms = Vector3(0.8, 4.0, 1.0)
+		"happy":
+			by = 0.13
+			ey = Vector3(1.2, 0.45, 1.0)
+			ms = Vector3(2.0, 2.2, 1.0)
+		"pain":
+			bz = 0.4
+			ey = Vector3(1.4, 0.3, 1.0)
+			ms = Vector3(1.4, 3.5, 1.0)
+		"ko":
+			ey = Vector3(1.6, 0.3, 1.0)
+			ms = Vector3(0.7, 3.0, 1.0)
+	for i in 2:
+		var side := -1.0 if i == 0 else 1.0
+		brows[i].rotation.z = lerpf(brows[i].rotation.z, bz * side, k)
+		brows[i].position.y = lerpf(brows[i].position.y, by, k)
+		eyes[i].scale = eyes[i].scale.lerp(ey, k)
+	mouth.scale = mouth.scale.lerp(ms, k)
+	emote.position.y = 1.95 + sin(t * 9.0) * 0.05
 
 	# ---- torso: lean, bob, counter-twist
 	var lean := sin(t * 2.0 + seed_t) * 0.02

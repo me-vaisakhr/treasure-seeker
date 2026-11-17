@@ -14,6 +14,7 @@ const Strand := preload("res://strand.gd")
 const END := 80          # treasure slab
 const GAP := 2.4         # distance between slab centres
 const JUMP_WINDOW := 0.9 # seconds to tap for a spike jump
+const HARMFUL := ["spike", "crumble", "snake", "tiger"]
 const HEAL_TURNS := 2     # own turns a wound takes to heal; wounded runners fight worse
 const ROLL_TIME := 8.0   # seconds a player has to roll before the turn is lost
 const PIXEL := 2          # 3D is rendered at 1/PIXEL resolution for the pixel-art look
@@ -201,6 +202,11 @@ var lbl_note: Label
 var turn_bar: Control
 var big_tw: Tween
 var msg_tw: Tween
+var card: PanelContainer   # what the roll leads to: icon, title, effect
+var card_icon: TextureRect
+var card_title: Label
+var card_sub: Label
+var card_tw: Tween
 var pin_at := {}      # player name -> where their pin is drawn on the race bar (slabs, eased)
 var pin_bo := 0.0     # the boulder's pin
 var flash_rect: ColorRect  # full-screen tint when you are hurt or reborn
@@ -327,6 +333,10 @@ func mat(c: Color, glow := false) -> StandardMaterial3D:
 		m.uv1_triplanar_sharpness = 150.0
 		m.uv1_scale = Vector3.ONE * 0.25  # one texel = 0.25 m on every cube
 		m.roughness = 1.0
+		# dissolve when very close to the camera, so posts and arches never block the view
+		m.distance_fade_mode = BaseMaterial3D.DISTANCE_FADE_PIXEL_DITHER
+		m.distance_fade_min_distance = 1.4
+		m.distance_fade_max_distance = 3.6
 		if glow:
 			m.emission_enabled = true
 			m.emission = c
@@ -453,6 +463,37 @@ func burst(at: Vector3, c: Color, n := 14, speed := 4.0) -> void:
 	world.add_child(ps)
 	ps.emitting = true
 	get_tree().create_timer(1.6).timeout.connect(ps.queue_free)
+
+
+func plume(at: Vector3, c: Color, n: int, rise: float, secs: float, glow := false) -> void:
+	# a column of particles that streams upward for a while: smoke, sparks, light
+	var ps := CPUParticles3D.new()
+	var bm := BoxMesh.new()
+	bm.size = Vector3.ONE * 0.2
+	ps.mesh = bm
+	ps.material_override = mat(c, glow)
+	ps.amount = n
+	ps.lifetime = 1.1
+	ps.emission_shape = CPUParticles3D.EMISSION_SHAPE_SPHERE
+	ps.emission_sphere_radius = 0.5
+	ps.direction = Vector3.UP
+	ps.spread = 22.0
+	ps.initial_velocity_min = rise * 0.5
+	ps.initial_velocity_max = rise
+	ps.gravity = Vector3(0, 1.0, 0)
+	ps.scale_amount_min = 0.4
+	ps.scale_amount_max = 1.5
+	ps.angular_velocity_min = -200.0
+	ps.angular_velocity_max = 200.0
+	ps.position = at
+	world.add_child(ps)
+	ps.emitting = true
+	get_tree().create_timer(secs).timeout.connect(func() -> void:
+		if is_instance_valid(ps):
+			ps.emitting = false)
+	get_tree().create_timer(secs + 1.4).timeout.connect(func() -> void:
+		if is_instance_valid(ps):
+			ps.queue_free())
 
 
 func popup(at: Vector3, text: String, c: Color) -> void:
@@ -682,23 +723,30 @@ func path_dist(at: Vector3) -> float:
 
 
 func gen_board() -> void:
+	# Traps (spikes, cracked slab, cobra, tiger) always have at least two
+	# harmless slabs between them, so a bad stretch can never box a runner in.
+	# A cobra's throw lands on a plain slab with no trap beside it.
 	kinds.clear()
 	rope_to.clear()
 	snake_to.clear()
 	for i in END + 1:
 		kinds.append("")
 	var reserved := {}
+	var last_trap := -9
 	for i in range(6, END - 1):
 		if reserved.has(i):
 			continue
+		var clear := i - last_trap >= 3
 		var r := rng.randf()
-		if r < 0.07 and kinds[i - 1] != "spike":
-			kinds[i] = "spike"
+		if r < 0.07:
+			if clear:
+				kinds[i] = "spike"
 		elif r < 0.13:
-			kinds[i] = "crumble"
-		elif r < 0.19 and i > 10:
-			var d := i - rng.randi_range(6, 10)
-			if kinds[d] == "" or kinds[d] == "coin":
+			if clear:
+				kinds[i] = "crumble"
+		elif r < 0.19:
+			var d := i - rng.randi_range(4, 7)
+			if clear and i > 12 and kinds[d] in ["", "coin"] and not kinds[d - 1] in HARMFUL and not kinds[d + 1] in HARMFUL:
 				kinds[i] = "snake"
 				snake_to[i] = d
 				kinds[d] = ""
@@ -710,12 +758,15 @@ func gen_board() -> void:
 				reserved[d] = true
 		elif r < 0.36:
 			kinds[i] = "mystery"
-		elif r < 0.40 and i > 12:
-			kinds[i] = "tiger"
+		elif r < 0.40:
+			if clear and i > 12:
+				kinds[i] = "tiger"
 		elif r < 0.60:
 			kinds[i] = "coin"
 		elif r < 0.64:
 			kinds[i] = "diamond"
+		if kinds[i] in HARMFUL:
+			last_trap = i
 
 
 func build_world() -> void:
@@ -745,7 +796,7 @@ func build_world() -> void:
 	for k in bot_count + 1:
 		var r: Dictionary = ROSTER[k]
 		var p := {"name": r.name, "color": r.color, "off": r.off, "bot": k > 0,
-			"pos": 0, "out": false, "done": false, "danger": false, "skip": 0, "hearts": 3, "coins": 0, "revives": 2, "shield": false, "wounded": 0, "banana": 0}
+			"pos": 0, "out": false, "done": false, "danger": false, "skip": 0, "hearts": 3, "coins": 0, "revives": 2, "shield": false, "wounded": 0, "banana": 0, "hit": {}}
 		p["a"] = make_actor(r.color, "YOU" if k == 0 else "")
 		p.a.position = spot(p, 0)
 		players.append(p)
@@ -1520,6 +1571,42 @@ func _build_ui() -> void:
 	flash_rect.color = Color(1, 0, 0, 0)
 	layer.add_child(flash_rect)
 
+	# landing card: appears after a roll and says what it leads to
+	card = PanelContainer.new()
+	card.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
+	card.offset_left = -250
+	card.offset_right = 250
+	card.offset_top = 300
+	card.offset_bottom = 400
+	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	card.visible = false
+	safe.add_child(card)
+	var crow := HBoxContainer.new()
+	crow.add_theme_constant_override("separation", 14)
+	crow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	card.add_child(crow)
+	card_icon = TextureRect.new()
+	card_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	card_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	card_icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	card_icon.custom_minimum_size = Vector2(78, 78)
+	card_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	crow.add_child(card_icon)
+	var cwords := VBoxContainer.new()
+	cwords.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	cwords.alignment = BoxContainer.ALIGNMENT_CENTER
+	cwords.add_theme_constant_override("separation", -2)
+	cwords.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	crow.add_child(cwords)
+	card_title = _label(30)
+	card_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	cwords.add_child(card_title)
+	card_sub = _label(21)
+	card_sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	card_sub.add_theme_color_override("font_color", Color("f3e3b8"))
+	card_sub.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	cwords.add_child(card_sub)
+
 	# reward reveal: spinning sunburst, big icon, caption
 	var vw := get_viewport().get_visible_rect().size.x
 	reward_root = Control.new()
@@ -1877,6 +1964,11 @@ func _draw_me() -> void:
 	if p.wounded > 0:
 		c.draw_string_outline(ui_font, Vector2(0, -8), "HEALING: %d" % p.wounded, HORIZONTAL_ALIGNMENT_CENTER, c.size.x, 22, 6, Color("2a2118"))
 		c.draw_string(ui_font, Vector2(0, -8), "HEALING: %d" % p.wounded, HORIZONTAL_ALIGNMENT_CENTER, c.size.x, 22, Color("ff8a7a"))
+	if active(p) and round_no >= 4 and p.pos - bo <= 6:  # the boulder is close behind you
+		var by := -34.0 if p.wounded > 0 else -8.0
+		var warn := "BOULDER %d BEHIND" % maxi(0, p.pos - bo)
+		c.draw_string_outline(ui_font, Vector2(0, by), warn, HORIZONTAL_ALIGNMENT_CENTER, c.size.x, 22, 6, Color("2a2118"))
+		c.draw_string(ui_font, Vector2(0, by), warn, HORIZONTAL_ALIGNMENT_CENTER, c.size.x, 22, Color("ffb347") if p.pos - bo > 3 else Color("ff5a4a"))
 
 
 func _draw_rays() -> void:
@@ -2135,9 +2227,22 @@ func take_turn(p: Dictionary) -> void:
 		var n: int = await roll(p)
 		if n == 0:
 			break
-		var trail := show_trail(p, n)
-		await wait(0.45)
-		await move(p, n)
+		var steps := n
+		var lead := 0
+		for q in players:
+			if active(q) or q.done:
+				lead = maxi(lead, q.pos)
+		var gap: int = lead - p.pos
+		var boost := 3 if gap >= 26 else (2 if gap >= 14 else 0)
+		if boost > 0:  # runners far behind get a tailwind, so the race stays a race
+			steps += boost
+			popup(p.a.position, "TAILWIND +%d" % boost, Color("5fe0ff"))
+			burst(p.a.position + Vector3(0, 1, 0), Color("5fe0ff"), 12, 4.0)
+			sfx.play("good", -8.0, 1.3)
+		var trail := show_trail(p, steps)
+		await wait(preview(p, steps))
+		p.a.express("")
+		await move(p, steps)
 		if is_instance_valid(trail):
 			trail.queue_free()
 		if active(p):
@@ -2150,6 +2255,70 @@ func take_turn(p: Dictionary) -> void:
 	set_die(0)
 	spot_off()
 	await wait(1.0)  # hold on this runner so the result can sink in before the camera moves on
+
+
+func show_card(icon_id: String, title_text: String, sub: String, c: Color, secs: float) -> void:
+	card_icon.texture = ui_tex(icon_id) if icon_id != "" else null
+	card_icon.visible = card_icon.texture != null
+	card_title.text = title_text
+	card_title.add_theme_color_override("font_color", c)
+	card_sub.text = sub
+	card.add_theme_stylebox_override("panel", _round(Color(0.1, 0.07, 0.05, 0.93), 18, 5, c))
+	card.visible = true
+	card.modulate.a = 1.0
+	card.pivot_offset = card.size / 2.0
+	card.scale = Vector2(0.6, 0.6)
+	if card_tw:
+		card_tw.kill()
+	card_tw = card.create_tween()
+	card_tw.tween_property(card, "scale", Vector2.ONE, 0.2).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	card_tw.tween_interval(secs)
+	card_tw.tween_property(card, "modulate:a", 0.0, 0.3)
+	card_tw.tween_callback(func() -> void: card.visible = false)
+
+
+func preview(p: Dictionary, n: int) -> float:
+	# Before anyone moves, say plainly what this roll leads to: a card with the
+	# slab's picture and effect, and the runner's face reacting. Returns how
+	# long to hold before moving.
+	var dest := mini(p.pos + n, END)
+	var kind: String = kinds[dest]
+	var spikes := false
+	for i in range(p.pos + 1, dest):
+		if kinds[i] == "spike" and not p.hit.has(i):
+			spikes = true
+	var who: String = "YOU" if not p.bot else p.name
+	var red := Color("ff5a4a")
+	if dest >= END:
+		show_card("trophy", "%s: THE TREASURE!" % who, "This roll reaches the gate", GOLD, 1.3)
+		p.a.express("happy")
+	elif kind in HARMFUL and p.hit.has(dest):
+		show_card("", "%s: A KNOWN TRAP" % who, "Caught once already: dodged this time", Color("7dff9b"), 1.2)
+	elif kind == "rope":
+		show_card("s_rope", "%s: ROPE!" % who, "Swing ahead %d slabs" % (rope_to[dest] - dest), Color("3fe07a"), 1.3)
+		p.a.express("happy")
+	elif kind == "snake":
+		show_card("s_snake", "%s: COBRA!" % who, "Thrown back %d slabs" % (dest - snake_to[dest]), red, 1.4)
+		p.a.express("scared")
+	elif kind == "tiger":
+		show_card("s_tiger", "%s: TIGER!" % who, "Lose a life and flee back", red, 1.4)
+		p.a.express("scared")
+	elif kind == "crumble":
+		show_card("s_crumble", "%s: CRACKED SLAB!" % who, "It gives way: lose a life", Color("ff9a2e"), 1.4)
+		p.a.express("scared")
+	elif kind == "spike":
+		show_card("s_spike", "%s: SPIKES!" % who, "Tap in time to jump them", red, 1.3)
+		p.a.express("scared")
+	elif kind == "mystery":
+		show_card("s_mystery", "%s: MYSTERY" % who, "An animal or a treasure chest", Color("b06aff"), 1.2)
+		p.a.express("wow")
+	elif spikes:
+		show_card("s_spike", "%s: SPIKES ON THE WAY" % who, "Tap in time to jump them", red, 1.2)
+		p.a.express("scared")
+	else:
+		return 0.4
+	sfx.play("step", -2.0, 0.8)
+	return 1.25
 
 
 func show_trail(p: Dictionary, n: int) -> Node3D:
@@ -2168,6 +2337,10 @@ func show_trail(p: Dictionary, n: int) -> Node3D:
 			box(cell, Vector3(0.4, 0.08, 0.4), Vector3(0, 0.07, 0), col).material_override = mat(col, true)
 		else:
 			var lit := col.lightened(0.5)
+			if kinds[i] in HARMFUL and not p.hit.has(i):
+				lit = Color("ff5a4a")  # danger
+			elif kinds[i] == "rope" or i >= END:
+				lit = Color("5fff8a")  # good news
 			for e in [-1.0, 1.0]:
 				box(cell, Vector3(2.3, 0.14, 0.2), Vector3(0, 0.12, e * 1.08), lit).material_override = mat(lit, true)
 				box(cell, Vector3(0.2, 0.14, 2.3), Vector3(e * 1.08, 0.12, 0), lit).material_override = mat(lit, true)
@@ -2380,7 +2553,9 @@ func _parkour(t: float, root: Node3D, from: Vector3, to: Vector3, style: String,
 func jump_phase(p: Dictionary, nxt: int) -> bool:
 	var root: Node3D = p.a
 	var hit := false
-	if is_bot(p):
+	if p.hit.has(nxt):
+		hit = true
+	elif is_bot(p):
 		await wait(0.3)
 		hit = rng.randf() < 0.7
 	else:
@@ -2419,6 +2594,7 @@ func jump_phase(p: Dictionary, nxt: int) -> bool:
 	say("%s hit the spikes!" % subj(p))
 	await hop(root, spot(p, nxt), 0.4, 0.2)
 	p.pos = nxt
+	p.hit[nxt] = true
 	shake(0.3)
 	await hitstop()
 	burst(root.position, Color("e2463a"), 18, 5.0)
@@ -2426,23 +2602,42 @@ func jump_phase(p: Dictionary, nxt: int) -> bool:
 	return false
 
 
-func settle(p: Dictionary) -> void:
-	# Whatever slab a player ends on triggers, however they got there, and the
-	# slab that sends them to is checked too. A slab already visited in this
-	# chain stops it, so it can never loop.
+func settle(p: Dictionary, forced := false) -> void:
+	# Whatever slab a player ends on triggers, and so does the slab that sends
+	# them to. But a runner who was thrown, dragged or knocked there is safe
+	# from traps on arrival (only the first landing of a move can hurt), and a
+	# trap that has already caught this runner does not catch them twice.
 	var seen := {}
+	var safe := forced
 	while active(p) and not seen.has(p.pos):
 		seen[p.pos] = true
 		var before: int = p.pos
 		collect(p)
-		await land(p)
+		await land(p, safe)
+		safe = true
 		if p.pos == before:
 			break
 	p.a.rotation = Vector3(0, yaws[mini(p.pos, END)], 0)
 
 
-func land(p: Dictionary) -> void:
-	match kinds[p.pos]:
+func safe_back(p: Dictionary, d: int) -> int:
+	# where a setback really puts a runner: never behind the boulder or right in front of it
+	return clampi(maxi(d, bo + 3), 0, p.pos)
+
+
+func land(p: Dictionary, safe := false) -> void:
+	var kind: String = kinds[p.pos]
+	if kind in HARMFUL:
+		if safe:
+			return
+		if p.hit.has(p.pos):  # fooled once already: they know this one
+			popup(p.a.position, "DODGED!", Color("7dff9b"))
+			sfx.play("good", -8.0)
+			p.a.express("happy", 0.8)
+			await wait(0.5)
+			return
+		p.hit[p.pos] = true
+	match kind:
 		"rope":
 			await rope_cross(p)
 		"snake":
@@ -2646,6 +2841,9 @@ func hurt(p: Dictionary) -> String:
 	popup(p.a.position, "-1 LIFE", Color("ff6b5e"))
 	p.a.flash()
 	p.a.pose = "hit"
+	p.a.express("pain", 1.0)
+	burst(p.a.position + Vector3(0, 1.5, 0), Color("e2463a"), 18, 5.0)   # the lost heart shatters
+	burst(p.a.position + Vector3(0, 1.5, 0), Color("ff9aa0"), 8, 3.0)
 	hud_lose(p, "heart")
 	if not p.bot:
 		screen_flash(Color(1, 0.1, 0.05, 0.38))
@@ -2676,7 +2874,9 @@ func die_anim(p: Dictionary) -> void:
 		await tw.finished
 		root.pose = ""
 	shake(0.3)
+	root.express("ko")
 	burst(root.position + Vector3(0, 0.3, 0), Color("d8c9a0"), 22, 3.5)
+	plume(root.position + Vector3(0, 0.2, 0), Color("5a5560"), 28, 2.4, 1.3)  # smoke rises off the fallen
 	sfx.play("land", 0.0, 0.6)
 	await wait(0.45)
 	var soul := Node3D.new()
@@ -2747,6 +2947,9 @@ func reborn(p: Dictionary, at_slab: int) -> void:
 	beam.scale = Vector3(0.05, 1, 0.05)
 	beam.create_tween().tween_property(beam, "scale", Vector3.ONE, 0.25).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 	sfx.play("reborn")
+	plume(at, Color("fff3a8"), 36, 6.0, 1.3, true)   # light streams up the beam
+	plume(at, Color("7dff9b"), 14, 3.5, 1.3, true)
+	root.express("")
 	say("%s: reborn at slab %d" % [subj(p), p.pos])
 	if not p.bot:
 		screen_flash(Color(1, 0.97, 0.75, 0.4))
@@ -2834,7 +3037,7 @@ func rope_cross(p: Dictionary) -> void:
 func snake_strike(p: Dictionary) -> void:
 	var root: Node3D = p.a
 	var i: int = p.pos
-	var d: int = snake_to[i]
+	var d: int = safe_back(p, snake_to[i])
 	var cobra: Node3D = snakes[i].node
 	var local: Vector3 = slabs[i].to_local(root.global_position)
 	say("A cobra threw %s back to slab %d" % [obj(p), d])
@@ -2898,7 +3101,7 @@ func crumble(p: Dictionary) -> void:
 	burst(root.position, Color("d8c9a0"), 22, 4.0)  # dust where it all hits the ground
 	sfx.play("land", 0.0, 0.7)
 	rebuild(slab, parts, homes)
-	p.pos = maxi(0, p.pos - 1)
+	p.pos = safe_back(p, p.pos - 1)
 	root.position = spot(p, p.pos) + Vector3(0, 7, 0)
 	await hop(root, spot(p, p.pos), 0.0, 0.4)
 	root.air = false
@@ -3142,7 +3345,7 @@ func tiger_attack(p: Dictionary) -> void:
 	var res: String = await hurt(p)
 	spot_off()
 	if res == "hit" and p.pos == i:
-		var d: int = maxi(0, i - 4)
+		var d: int = safe_back(p, i - 4)
 		say("%s fled from the tiger, back to slab %d" % [subj(p), d])
 		announce("-%d SLABS" % (i - d), Color("ff6b5e"))
 		root.run = true
@@ -3272,6 +3475,8 @@ func fight(p: Dictionary, q: Dictionary) -> void:
 	var mid := (a.position + b.position) / 2.0
 	a.pose = "guard"
 	b.pose = "guard"
+	a.express("angry")
+	b.express("angry")
 	spotlight(p, 0.7)
 	await wait(0.55)
 	# exchanges: the loser lands one too, so the result is not obvious at once
@@ -3287,7 +3492,10 @@ func fight(p: Dictionary, q: Dictionary) -> void:
 		sfx.play("punch")
 		shake(0.22)
 		vic.pose = "hit"
+		vic.express("pain")
+		att.express("angry")
 		burst(vic.position + Vector3(0, 1.1, 0), Color("fff8e1"), 9, 4.5)
+		burst(vic.position + Vector3(0, 1.5, 0), Color("ffe066"), 7, 6.0)  # comic stars
 		popup(vic.position, r[3], Color("ffe066"))
 		await hitstop(0.06)
 		att.create_tween().tween_property(att, "position", from, 0.14)
@@ -3303,15 +3511,19 @@ func fight(p: Dictionary, q: Dictionary) -> void:
 		await wait(0.11)
 	wn.pose = "kick"
 	ln.pose = "hit"
+	ln.express("ko", 2.4)
+	wn.express("angry")
+	burst(mid + Vector3(0, 1.2, 0), Color("ffe066"), 20, 7.0)
 	shake(0.45)
 	popup(mid, "K.O.!", Color("ff6b5e"))
 	slow_to = 0.3  # the knockout plays in deep slow motion
 	await hitstop(0.12)
-	lose.pos = maxi(0, lose.pos - 1)
+	lose.pos = safe_back(lose, lose.pos - 1)
 	ln.create_tween().tween_property(ln, "rotation:x", ln.rotation.x - TAU, 0.5)
 	await hop(ln, spot(lose, lose.pos), 1.8, 0.5)
 	spot_off()
 	wn.pose = "cheer"
+	wn.express("happy", 1.4)
 	ln.pose = ""
 	ln.rotation = Vector3(0, yaws[lose.pos], 0)
 	squash(ln)
@@ -3324,10 +3536,13 @@ func fight(p: Dictionary, q: Dictionary) -> void:
 	var landed: int = lose.pos
 	await hurt(lose)
 	if active(lose) and lose.pos == landed:
-		await settle(lose)
+		await settle(lose, true)
 
 
 func boulder_turn() -> void:
+	# The boulder chases whoever is last. It is never a surprise: when it is
+	# anywhere near, the camera swings round to watch it roll, and it must
+	# catch a runner twice running (a close call, then the crush) to kill.
 	var last: Dictionary = {}
 	for p in players:
 		if active(p) and (last.is_empty() or p.pos < last.pos):
@@ -3339,8 +3554,22 @@ func boulder_turn() -> void:
 			say("The boulder is waking up...")
 			await wait(0.8)
 		return
+	# The boulder only ever rolls forward. A runner who has somehow ended up at
+	# or behind it scrambles clear to just ahead of it instead.
+	for p in players:
+		if active(p) and p.pos <= bo + 1:
+			focus_p = p
+			p.pos = mini(bo + 3, END - 1)
+			p.danger = false
+			say("%s scrambled clear of the boulder" % subj(p))
+			await hop(p.a, spot(p, p.pos), 1.4, 0.5)
+			p.a.rotation = Vector3(0, yaws[p.pos], 0)
+			refresh_ui()
+	last = {}
+	for p in players:
+		if active(p) and (last.is_empty() or p.pos < last.pos):
+			last = p
 	focus_p = last
-	# Chases whoever is last. First catch is a close call, second one crushes.
 	var speed := mini(2 + round_no / 6, 4)
 	if last.pos - bo > 12:
 		speed += 2
@@ -3348,44 +3577,75 @@ func boulder_turn() -> void:
 	var caught: bool = bo + speed >= last.pos
 	var crushed: bool = caught and last.danger
 	if crushed:
-		bo = last.pos
+		bo = maxi(bo, last.pos)
 	elif caught:
 		bo = maxi(bo, last.pos - 3)
 	else:
 		bo += speed
+	var near: bool = last.pos - bo <= 9
+	if near:  # look back down the path at it
+		var i: int = clampi(last.pos, 0, END)
+		in_cine = true
+		cine_smooth = 5.0
+		cine_target = boulder
+		cine_pos = last.a.position + dirs[i] * 5.5 + dirs[i].cross(Vector3.UP) * 2.6 + Vector3(0, 4.2, 0)
+		cine_look_now = last.a.position + Vector3(0, 1.0, 0)
+		announce("BOULDER!", Color("ff9a2e"))
+		last.a.express("scared")
+		last.a.turn_to(yaws[i] + PI)  # the runner looks back at it
+		await wait(0.55)
 	shake(0.2)
 	sfx.play("boulder")
+	var dur := 0.7 + (0.5 if near else 0.0)
 	var tw := create_tween()
 	tw.tween_method(func(f: float) -> void:
 		var a := floori(f)
-		boulder.position = slab_pos(a).lerp(slab_pos(a + 1), f - a) + Vector3(0, 1.25, 0), float(from_i), float(bo), 0.7)
+		boulder.position = slab_pos(a).lerp(slab_pos(a + 1), f - a) + Vector3(0, 1.25, 0)
+		if near and Engine.get_frames_drawn() % 4 == 0:
+			burst(boulder.position - Vector3(0, 1.1, 0), Color("b3ada1"), 3, 2.5), float(from_i), float(bo), dur)
 	await tw.finished
 	burst(boulder.position - Vector3(0, 1.2, 0), Color("8a8478"), 14, 4.0)
 	for p in players:
 		p.danger = false
 	if crushed and last.banana > 0:  # snatched from under the boulder
+		_end_watch(last)
 		await banana_rescue(last)
 	elif crushed:
 		last.a.scale = Vector3(1.3, 0.12, 1.3)
+		last.a.express("ko")
 		shake(0.7)
 		sfx.play("crush")
 		await hitstop(0.12)
 		burst(boulder.position, last.color, 30, 7.0)
 		say("The boulder crushed %s!" % obj(last))
-		await wait(0.8)
+		await wait(0.9)
+		_end_watch(last)
 		last.hearts = 0
 		await lose_all(last, mini(bo + 3, END - 1))
 	elif caught:
-		last.danger = true
+		last.danger = true  # only a close call arms the crush
 		shake(0.4)
 		sfx.play("bad", -4.0)
 		popup(last.a.position, "CLOSE!", Color("ff6b5e"))
+		show_card("", "CLOSE CALL!", "%s must get clear, or be crushed next time" % ("YOU" if not last.bot else last.name), Color("ff5a4a"), 1.4)
 		say("Close call for %s! Boulder right behind" % obj(last))
+		await wait(0.9)
 	else:
-		last.danger = last.pos - bo <= 2
 		say("Boulder is %d slabs behind %s" % [last.pos - bo, obj(last)])
+	_end_watch(last)
 	refresh_ui()
 	await wait(0.6)
+
+
+func _end_watch(last: Dictionary) -> void:
+	if not in_cine:
+		return
+	in_cine = false
+	cine_target = null
+	cine_smooth = 0.0
+	if active(last):
+		last.a.express("")
+		last.a.turn_to(yaws[clampi(last.pos, 0, END)])
 
 
 func title(parent: Node, text: String, size: int, c: Color) -> Label:
@@ -3852,7 +4112,8 @@ func _input(event: InputEvent) -> void:
 		return
 	if in_cine:
 		skip_intro = true
-	elif jump_open:
+		return
+	if jump_open:
 		jump_hit = true
 	elif await_roll:  # a tap anywhere rolls, not only on the die
 		await_roll = false
