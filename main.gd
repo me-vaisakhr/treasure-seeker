@@ -332,6 +332,9 @@ var die_rect: TextureRect
 var die_pip: StandardMaterial3D
 var treasure: Node3D       # the great chest at the gate: the first runner there opens it
 var gems := 0              # diamonds won across games
+var wallet_hud: Control    # in-race purse: coins and diamonds, under the pause button
+var wallets: Array[Control] = []  # every purse on screen (race HUD, lobby)
+var wallet_pulse := [-9.0, -9.0]  # until when the coin / diamond pill is bumped (something just landed in it)
 var die_bonus := 0         # slabs added to the roll (tailwind, run +3): shown on the die so the move adds up
 var swing_hold := false    # blades are held aside while a runner rolls under
 var die_color := Color.WHITE
@@ -1920,7 +1923,14 @@ func _build_ui() -> void:
 	pause_btn.draw.connect(_draw_pause.bind(pause_btn))
 	pause_btn.pressed.connect(toggle_pause)
 	safe.add_child(pause_btn)
-	hud_nodes = [top, die, bottom, lbl_hint, turn_bar, lbl_big, me_bar, pause_btn]
+	wallet_hud = make_wallet(true)
+	wallet_hud.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
+	wallet_hud.offset_left = -166
+	wallet_hud.offset_right = -14
+	wallet_hud.offset_top = 256
+	wallet_hud.offset_bottom = 360
+	safe.add_child(wallet_hud)
+	hud_nodes = [top, die, bottom, lbl_hint, turn_bar, lbl_big, me_bar, pause_btn, wallet_hud]
 
 	lbl_count = _label(300)
 	lbl_count.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -2170,6 +2180,77 @@ func _draw_chip(k: int) -> void:
 		c.draw_rect(Rect2(0, oy, w, c.size.y - 8), Color(0.1, 0.1, 0.1, 0.6))
 
 
+func make_wallet(vertical: bool) -> Control:
+	var c := Control.new()
+	c.set_meta("vertical", vertical)
+	c.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	c.draw.connect(_draw_wallet.bind(c))
+	wallets.append(c)
+	return c
+
+
+func pill_at(c: Control, k: int) -> Vector2:
+	# top-left of pill k (0 coins, 1 diamonds) inside a purse
+	return Vector2(0, k * 58.0) if c.get_meta("vertical") else Vector2(k * 172.0, 0)
+
+
+func _draw_wallet(c: Control) -> void:
+	# Two jewel-box pills: a dark plate with a gold (coins) or ice-blue
+	# (diamonds) rim, a sheen across the top, the icon large and overhanging
+	# the left end, the count in the display face. A pill bumps when something lands in it.
+	var racing: bool = not in_lobby and not players.is_empty()
+	var vals := [purse(players[0]) if racing else wallet, gems]
+	var size := Vector2(152, 46)
+	var dark := Color("2a2118")
+	for k in 2:
+		var rim: Color = [Color("ffd76a"), Color("5fe0ff")][k]
+		var bump: float = clampf((wallet_pulse[k] - clock) / 0.3, 0.0, 1.0)
+		c.draw_set_transform(pill_at(c, k) + size / 2.0, 0.0, Vector2.ONE * (1.0 + 0.22 * bump))
+		var o := -size / 2.0
+		c.draw_style_box(_round(Color(0, 0, 0, 0.35), 23), Rect2(o + Vector2(20, 5), size - Vector2(20, 0)))  # drop shadow
+		c.draw_style_box(_round(Color(0.13, 0.09, 0.06, 0.94), 23, 4, rim), Rect2(o + Vector2(20, 0), size - Vector2(20, 0)))
+		c.draw_style_box(_round(Color(1, 1, 1, 0.09 + 0.25 * bump), 9), Rect2(o + Vector2(52, 7), Vector2(size.x - 68, 11)))  # sheen
+		_icon(c, ["coin", "gem"][k], o + Vector2(-4, -9), 64, rim)
+		var txt := str(vals[k])
+		c.draw_string_outline(ui_font, o + Vector2(58, 34), txt, HORIZONTAL_ALIGNMENT_RIGHT, size.x - 74, 30, 7, dark)
+		c.draw_string(ui_font, o + Vector2(58, 34), txt, HORIZONTAL_ALIGNMENT_RIGHT, size.x - 74, 30, Color("fff8e1").lerp(rim, 0.25 + 0.5 * bump))
+	c.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
+func fly_to_wallet(k: int, n: int, from: Vector3) -> void:
+	# What you collect flies from where it was picked up into the purse: up to
+	# six icons, one after another, each bumping the pill as it lands.
+	if not is_instance_valid(wallet_hud) or not wallet_hud.visible or cam.is_position_behind(from):
+		return
+	var layer: Node = bubble.get_parent()
+	var vis := get_viewport().get_visible_rect().size
+	var start: Vector2 = cam.unproject_position(from) * (vis / Vector2(view.size))
+	var goal: Vector2 = wallet_hud.global_position + pill_at(wallet_hud, k) + Vector2(4, -6)
+	for j in mini(n, 6):
+		var ic := TextureRect.new()
+		ic.texture = ui_tex(["coin", "gem"][k])
+		ic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		ic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		ic.size = Vector2(56, 56)
+		ic.pivot_offset = ic.size / 2.0
+		ic.position = start - ic.size / 2.0
+		ic.modulate.a = 0.0
+		layer.add_child(ic)
+		var up := start - ic.size / 2.0 + Vector2(rng.randf_range(-60, 60), rng.randf_range(-110, -50))
+		var tw := ic.create_tween()
+		tw.tween_interval(j * 0.07)
+		tw.tween_property(ic, "modulate:a", 1.0, 0.02)
+		tw.tween_property(ic, "position", up, 0.2).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)  # tossed up
+		tw.tween_property(ic, "position", goal, 0.42).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)  # then drawn in
+		tw.parallel().tween_property(ic, "rotation", TAU, 0.42)
+		tw.parallel().tween_property(ic, "scale", Vector2(0.75, 0.75), 0.42)
+		tw.tween_callback(func() -> void:
+			wallet_pulse[k] = clock + 0.3
+			sfx.play("coin", -9.0, 1.2 + j * 0.06)
+			ic.queue_free())
+
+
 func _draw_me() -> void:
 	# your own kit in the bottom-left corner, large: lives on top, coins and respawns below
 	if players.is_empty():
@@ -2179,11 +2260,8 @@ func _draw_me() -> void:
 	c.draw_style_box(_round(Color(0.1, 0.07, 0.05, 0.9), 16, 5, Color("ffd76a")), Rect2(Vector2.ZERO, c.size))
 	for h in maxi(3, p.hearts):
 		_icon(c, "heart" if h < p.hearts else "heart_empty", Vector2(14 + h * 40.0, 12), 40, Color("e2463a") if h < p.hearts else Color("5a4636"))
-	_icon(c, "coin", Vector2(14, 62), 38, GOLD)
-	c.draw_string_outline(ui_font, Vector2(58, 94), str(purse(p)), HORIZONTAL_ALIGNMENT_LEFT, -1, 32, 6, Color("2a2118"))
-	c.draw_string(ui_font, Vector2(58, 94), str(purse(p)), HORIZONTAL_ALIGNMENT_LEFT, -1, 32, Color("fff8e1"))
 	for r in p.revives:
-		_icon(c, "ankh", Vector2(124 + r * 36.0, 62), 40, Color("5fe0ff"))
+		_icon(c, "ankh", Vector2(14 + r * 40.0, 62), 40, Color("5fe0ff"))
 	if p.shield:
 		_icon(c, "shield", Vector2(c.size.x - 52, 62), 40, Color("3f7fe0"))
 	if p.banana > 0:
@@ -2376,6 +2454,9 @@ func refresh_ui(current: Dictionary = {}) -> void:
 		c.queue_redraw()
 	me_bar.queue_redraw()
 	track.queue_redraw()
+	for w in wallets:
+		if is_instance_valid(w):
+			w.queue_redraw()
 
 
 func say(text: String) -> void:
@@ -3210,9 +3291,12 @@ func move(p: Dictionary, n: int) -> void:
 			await wait(0.5)
 		else:
 			await reward(p, "coin", "+%d COINS" % prize[0], GOLD)
+			fly_to_wallet(0, 6, root.position + Vector3(0, 1.2, 0))
 			if prize[1] > 0:
 				gems += prize[1]
 				await reward(p, "gem", "+%d DIAMOND%s" % [prize[1], "" if prize[1] == 1 else "S"], Color("5fe0ff"))
+				fly_to_wallet(1, prize[1], root.position + Vector3(0, 1.2, 0))
+				await wait(0.8)
 		refresh_ui()
 		return
 	await settle(p)
@@ -3508,6 +3592,8 @@ func earn(p: Dictionary, n: int) -> void:
 	sfx.play("coin")
 	popup(p.a.position, "+%d" % n, GOLD)
 	burst(p.a.position + Vector3(0, 1.2, 0), GOLD, 6, 3.0)
+	if not is_bot(p):
+		fly_to_wallet(0, n, p.a.position + Vector3(0, 1.2, 0))
 	if is_bot(p) and p.coins >= 10 and p.hearts < 5:  # bots turn ten coins into a life; you choose what to buy
 		p.coins -= 10
 		p.hearts += 1
@@ -3522,6 +3608,15 @@ func collect(p: Dictionary) -> void:
 		pickups[p.pos].queue_free()
 		pickups.erase(p.pos)
 		kinds[p.pos] = ""
+		if n == 5 and not is_bot(p):  # for you a diamond is a diamond: kept between races
+			gems += 1
+			sfx.play("coin", 0.0, 1.5)
+			popup(p.a.position, "+1 DIAMOND", Color("5fe0ff"))
+			burst(p.a.position + Vector3(0, 1.2, 0), Color("5fe0ff"), 10, 4.0)
+			fly_to_wallet(1, 1, p.a.position + Vector3(0, 1.2, 0))
+			save_settings()
+			quip(p, "diamond")
+			return
 		earn(p, n)
 		quip(p, "diamond" if n == 5 else "coin", 1.0 if n == 5 else 0.25)
 
@@ -4780,6 +4875,14 @@ func menu(page: String) -> void:
 	shade_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	lobby.add_child(shade_rect)
 
+	wallets = wallets.filter(func(w: Control) -> bool: return is_instance_valid(w) and not w.is_queued_for_deletion())
+	var purse_bar := make_wallet(false)
+	purse_bar.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
+	purse_bar.offset_left = -162
+	purse_bar.offset_right = 162
+	purse_bar.offset_top = 86
+	purse_bar.offset_bottom = 132
+	lobby.add_child(purse_bar)
 	var col := VBoxContainer.new()
 	col.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	col.offset_left = 46
@@ -4942,7 +5045,6 @@ func menu(page: String) -> void:
 			icon_button(_draw_back, menu.bind("main"), false)
 		"shop":
 			title(v, "POWER-UPS", 54, GOLD)
-			title(v, "Coins: %d     Diamonds: %d" % [wallet, gems], 30, cream)
 			var goods := [["trophy", "SAFE ROLL", "Rolls again if you land on a trap", COST.reroll], ["s_rope", "RUN +3", "Go 3 slabs further this turn", COST.sprint], ["shield", "SHIELD", "Blocks the next hit", COST.shield], ["heart", "LIFE", "One more heart", COST.life]]
 			for g in goods:
 				var line := HBoxContainer.new()
@@ -5296,6 +5398,10 @@ func _process(delta: float) -> void:
 		Engine.time_scale = slow_now * turn_speed
 	if prompt.visible:
 		prompt.queue_redraw()
+	if clock < maxf(wallet_pulse[0], wallet_pulse[1]) + 0.1:  # a pill is mid-bump
+		for w in wallets:
+			if is_instance_valid(w):
+				w.queue_redraw()
 	for sw in swingers:
 		if is_instance_valid(sw):
 			sw.rotation.z = lerpf(sw.rotation.z, 1.25 if swing_hold else sin(clock * 3.2) * 0.95, minf(1.0, delta * 14.0))
