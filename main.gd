@@ -85,6 +85,7 @@ const LINES := {
 	"win": ["I did it! The treasure!", "Gold! Glorious gold!", "Champion of the jungle!", "Told you I would win!"],
 }
 const COST := {"reroll": 3, "sprint": 5, "shield": 5, "life": 10}  # coin prices of the turn powers
+const PRIZES := [[30, 3], [15, 1], [8, 0]]  # coins and diamonds for 1st, 2nd, 3rd; later finishers get 3 coins
 const HEAL_TURNS := 2     # own turns a wound takes to heal; wounded runners fight worse
 const ROLL_TIME := 8.0   # seconds a player has to roll before the turn is lost
 const PIXEL := 2          # 3D is rendered at 1/PIXEL resolution for the pixel-art look
@@ -325,6 +326,12 @@ var track: Control
 var msg_panel: PanelContainer
 var die: Control
 var die_val := 0
+var die_view: SubViewport  # the 3D die: its own little scene, shown over the flat die while it tumbles
+var die_cube: Node3D
+var die_rect: TextureRect
+var die_pip: StandardMaterial3D
+var treasure: Node3D       # the great chest at the gate: the first runner there opens it
+var gems := 0              # diamonds won across games
 var die_bonus := 0         # slabs added to the roll (tailwind, run +3): shown on the die so the move adds up
 var swing_hold := false    # blades are held aside while a runner rolls under
 var die_color := Color.WHITE
@@ -901,6 +908,11 @@ func build_world() -> void:
 	_build_ropes()
 	_build_cave()
 	_build_scenery()
+	treasure = Animals.build("chest", self)  # the prize itself, waiting on the last slab
+	world.add_child(treasure)
+	treasure.position = path[END] + Vector3(0, 0, -0.6).rotated(Vector3.UP, yaws[END])
+	treasure.rotation.y = yaws[END] + PI
+	treasure.scale = Vector3.ONE * 1.5
 
 	for k in bot_count + 1:
 		var r: Dictionary = ROSTER[k]
@@ -1528,6 +1540,21 @@ func _round(c: Color, radius := 18, border := 0, bc := Color("2a2118")) -> Style
 
 
 func ui_tex(id: String) -> Texture2D:
+	if id == "gem" and not tex_cache.has(id):  # a cut diamond, drawn here (there is no painted one)
+		var im := Image.create(96, 96, false, Image.FORMAT_RGBA8)
+		for y in 96:
+			for x in 96:
+				var dx := (x - 47.5) / 42.0
+				var dy := (y - 47.5) / 46.0
+				var d := absf(dx) + absf(dy)
+				if d <= 1.0:
+					var c := Color("5fe0ff") if dy < -0.1 else Color("2f9aa8")
+					if dx < 0.0 and dy < -0.1:
+						c = Color("c8f6ff")
+					elif absf(dx) < 0.22:
+						c = c.lightened(0.25)
+					im.set_pixel(x, y, Color("12303a") if d > 0.88 else c)
+		tex_cache[id] = ImageTexture.create_from_image(im)
 	if not tex_cache.has(id):
 		var path := "res://ui/%s.png" % id
 		tex_cache[id] = load(path) if ResourceLoader.exists(path) else null
@@ -2263,24 +2290,10 @@ func _draw_track() -> void:
 
 
 func _draw_die() -> void:
+	# The die itself is the 3D cube (see _build_die3d). Only the bonus badge is drawn here.
 	if die_val == 0:
 		return
 	var r := Rect2(Vector2.ZERO, die.size)
-	var face := ui_tex("die")
-	if face:
-		die.draw_texture_rect(face, Rect2(Vector2(0, r.size.y * 0.05), r.size), false, Color(0, 0, 0, 0.45))  # drop shadow
-		die.draw_texture_rect(face, r, false)
-	else:
-		die.draw_style_box(_round(Color("2a2118"), 32), Rect2(Vector2(0, 12), r.size))
-		die.draw_style_box(_round(Color("fbf6e6"), 32, 6), r)
-	var pips := {1: [4], 2: [0, 8], 3: [0, 4, 8], 4: [0, 2, 6, 8], 5: [0, 2, 4, 6, 8], 6: [0, 2, 3, 5, 6, 8]}
-	for k in pips[die_val]:
-		var cell := Vector2(k % 3, k / 3)
-		var at := r.size * (Vector2(0.27, 0.27) + cell * 0.23)
-		var u := r.size.x / 210.0
-		die.draw_circle(at, 17 * u, Color("2a2118"))
-		die.draw_circle(at, 13 * u, die_color.darkened(0.15))
-		die.draw_circle(at + Vector2(-4, -4) * u, 4 * u, die_color.lightened(0.5))
 	if die_bonus > 0:  # "+2" badge on the corner and the total underneath: the move is die + bonus
 		var s := r.size.x / 170.0
 		var at_b := Vector2(r.size.x - 6 * s, 10 * s)
@@ -2292,10 +2305,35 @@ func _draw_die() -> void:
 		die.draw_string(ui_font, Vector2(-40 * s, r.size.y + 30 * s), total, HORIZONTAL_ALIGNMENT_CENTER, r.size.x + 80 * s, int(30 * s), Color("5fe0ff"))
 
 
+func die_face(n: int) -> Basis:
+	# the turn that brings face n to the top
+	return Basis.from_euler({1: Vector3.ZERO, 6: Vector3(PI, 0, 0), 2: Vector3(-PI / 2.0, 0, 0), 5: Vector3(PI / 2.0, 0, 0), 3: Vector3(0, 0, PI / 2.0), 4: Vector3(0, 0, -PI / 2.0)}[n])
+
+
+func _fit_die3d() -> void:
+	# the cube's picture is larger than the die's box, so the throw has room to bounce
+	if die_rect:
+		var m: float = (die.offset_right - die.offset_left) * 0.9
+		die_rect.offset_left = -m
+		die_rect.offset_top = -m
+		die_rect.offset_right = m
+		die_rect.offset_bottom = m
+
+
 func set_die(v: int, pop := false) -> void:
 	die_val = v
 	if v == 0:
 		die_bonus = 0
+		if die_rect:
+			die_rect.visible = false
+	else:  # the cube at rest, showing v
+		if die_view == null:
+			_build_die3d()
+		die_pip.albedo_color = die_color.darkened(0.15) if die_color != Color.WHITE else Color("c0392b")
+		die_cube.basis = die_face(v)
+		die_cube.position = Vector3.ZERO
+		die_view.render_target_update_mode = SubViewport.UPDATE_ONCE
+		die_rect.visible = true
 	die.rotation = 0.0 if pop or v == 0 else rng.randf_range(-0.25, 0.25)
 	if pop:
 		die.scale = Vector2(1.45, 1.45)
@@ -2366,6 +2404,7 @@ func place_die(big: bool) -> void:
 		die.offset_top = -168
 		die.offset_bottom = -58
 	die.pivot_offset = (Vector2(die.offset_right - die.offset_left, die.offset_bottom - die.offset_top)) / 2.0
+	_fit_die3d()
 
 
 # ---------------------------------------------------------------- game flow
@@ -2562,6 +2601,8 @@ func is_bad(p: Dictionary, steps: int) -> bool:
 
 func purse(p: Dictionary) -> int:
 	# coins a runner can spend: this race's, and for you also the bank from earlier games
+	if not is_bot(p) and results.visible:  # already banked
+		return wallet
 	return p.coins + (0 if is_bot(p) else wallet)
 
 
@@ -2956,14 +2997,106 @@ func roll(p: Dictionary, quick := false) -> int:
 			announce("TIME UP", Color("ff6b5e"))
 			await wait(1.0)
 			return 0
-	sfx.play("dice")
-	for k in 6:
-		set_die(rng.randi_range(1, 6))
-		await wait(0.04)
 	var n := rng.randi_range(1, 6)
+	sfx.play("dice")
+	await roll3d(n, 0.6 if is_bot(p) else 1.15)  # the die is thrown and tumbles to rest: a moment of suspense
 	set_die(n, true)
 	await wait(0.25)
 	return n
+
+
+func _build_die3d() -> void:
+	# A real cube with pips, in a small scene of its own, drawn at full
+	# resolution over the flat die while it rolls.
+	die_view = SubViewport.new()
+	die_view.size = Vector2i(512, 512)
+	die_view.transparent_bg = true
+	die_view.own_world_3d = true
+	die_view.render_target_update_mode = SubViewport.UPDATE_DISABLED
+	add_child(die_view)
+	var c3 := Camera3D.new()
+	c3.fov = 36.0
+	die_view.add_child(c3)
+	c3.position = Vector3(0, 6.0, 1.5)  # nearly straight down: the top face is the number
+	c3.look_at(Vector3(0, 0.4, 0))
+	var lamp := DirectionalLight3D.new()
+	lamp.rotation_degrees = Vector3(-58, 28, 0)
+	die_view.add_child(lamp)
+	var we := WorldEnvironment.new()
+	var e := Environment.new()
+	e.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	e.ambient_light_color = Color.WHITE
+	e.ambient_light_energy = 0.75
+	we.environment = e
+	die_view.add_child(we)
+	die_cube = Node3D.new()
+	die_view.add_child(die_cube)
+	var body := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = Vector3.ONE * 1.5
+	body.mesh = bm
+	var white := StandardMaterial3D.new()
+	white.albedo_color = Color("fbf6e6")
+	body.material_override = white
+	die_cube.add_child(body)
+	var rim := MeshInstance3D.new()  # dark outline: a slightly larger shell seen from inside
+	var rm := BoxMesh.new()
+	rm.size = Vector3.ONE * 1.62
+	rim.mesh = rm
+	var ink := StandardMaterial3D.new()
+	ink.albedo_color = Color("2a2118")
+	ink.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	ink.cull_mode = BaseMaterial3D.CULL_FRONT
+	rim.material_override = ink
+	die_cube.add_child(rim)
+	die_pip = StandardMaterial3D.new()
+	var ball := SphereMesh.new()
+	ball.radius = 0.15
+	ball.height = 0.3
+	# opposite faces add up to seven
+	var faces := {1: Vector3.UP, 6: Vector3.DOWN, 2: Vector3.BACK, 5: Vector3.FORWARD, 3: Vector3.RIGHT, 4: Vector3.LEFT}
+	var pips := {1: [4], 2: [0, 8], 3: [0, 4, 8], 4: [0, 2, 6, 8], 5: [0, 2, 4, 6, 8], 6: [0, 2, 3, 5, 6, 8]}
+	for v in faces:
+		var nrm: Vector3 = faces[v]
+		var t1 := Vector3(nrm.y, nrm.z, nrm.x)
+		var t2 := nrm.cross(t1)
+		for k in pips[v]:
+			var dot := MeshInstance3D.new()
+			dot.mesh = ball
+			dot.material_override = die_pip
+			dot.position = nrm * 0.74 + t1 * ((k % 3) - 1) * 0.42 + t2 * ((k / 3) - 1) * 0.42
+			die_cube.add_child(dot)
+	die_rect = TextureRect.new()
+	die_rect.texture = die_view.get_texture()
+	die_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	die_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	die_rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	die_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	die_rect.visible = false
+	die.add_child(die_rect)
+	_fit_die3d()
+
+
+func roll3d(n: int, secs: float) -> void:
+	if die_view == null:
+		_build_die3d()
+	die_pip.albedo_color = die_color.darkened(0.15)
+	var final := die_face(n)
+	var spin := Vector3(rng.randf_range(2.0, 3.0), rng.randf_range(1.0, 2.0), rng.randf_range(2.0, 3.0)) * TAU
+	var from_x := rng.randf_range(-1.4, 1.4)
+	die.rotation = 0.0
+	die_view.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	die_rect.visible = true
+	var tw := create_tween()
+	tw.tween_method(func(t: float) -> void:
+		var e := 1.0 - pow(1.0 - t, 3.0)
+		die_cube.basis = Basis.from_euler(spin * (1.0 - e)) * final
+		die_cube.position = Vector3(from_x * (1.0 - e), absf(cos(t * PI * 2.5)) * (1.0 - t) * 2.4, 0), 0.0, 1.0, secs)
+	await tw.finished
+	if dead or not is_inside_tree():
+		await never
+	sfx.play("step", -3.0, 1.4)
+	die_view.render_target_update_mode = SubViewport.UPDATE_ONCE  # it stays where it landed: this is the die
 
 
 func move(p: Dictionary, n: int) -> void:
@@ -2999,20 +3132,43 @@ func move(p: Dictionary, n: int) -> void:
 	if p.pos >= END:
 		p.done = true
 		finished.append(p)
+		var place := finished.size()
+		say("%s reached the treasure!" % subj(p))
+		sfx.play("win")
+		if place == 1 and is_instance_valid(treasure):  # the first one there opens the great chest
+			spotlight(p, 0.7, 3.0)
+			zoom_to = 0.6
+			await open_chest(treasure, p, 3 if not is_bot(p) else 1)
+			for k in 3:  # coins and diamonds fountain out of it
+				burst(treasure.position + Vector3(0, 1.0, 0), [GOLD, Color("5fe0ff"), Color("fff8e1")][k], 30, 8.0)
+				sfx.play("coin", -3.0, 1.0 + k * 0.15)
+				await wait(0.14)
+			spot_off()
 		for k in 3:
 			burst(root.position + Vector3(0, 1.5, 0), [GOLD, Color("fff8e1"), p.color][k], 26, 8.0)
-		popup(root.position, "#%d" % finished.size(), GOLD)
-		sfx.play("win")
+		popup(root.position, "#%d" % place, GOLD)
 		root.pose = "cheer"
 		face_player(p)
 		quip(p, "win", 1.0, 3.0)
 		rival_says(p, "rival_won")
 		fireworks(root.position)
 		shake(0.3)
-		if finished.size() == 1:
+		if place == 1:
 			announce("YOU WIN!" if not p.bot else "%s WINS!" % p.name, GOLD)
-		say("%s reached the treasure!" % subj(p))
-		await wait(1.7)
+		await wait(1.2)
+		# the prize: coins for everyone who finishes, diamonds for the first two
+		var prize: Array = PRIZES[place - 1] if place <= PRIZES.size() else [3, 0]
+		p.coins += prize[0]
+		p["prize"] = prize
+		if is_bot(p):
+			popup(root.position, "+%d COINS" % prize[0], GOLD)
+			await wait(0.5)
+		else:
+			await reward(p, "coin", "+%d COINS" % prize[0], GOLD)
+			if prize[1] > 0:
+				gems += prize[1]
+				await reward(p, "gem", "+%d DIAMOND%s" % [prize[1], "" if prize[1] == 1 else "S"], Color("5fe0ff"))
+		refresh_ui()
 		return
 	await settle(p)
 	await bump(p)
@@ -3902,37 +4058,8 @@ func mystery(p: Dictionary) -> void:
 		"chest":
 			a.position = path[i] + Vector3(0, 0, -0.75).rotated(Vector3.UP, yaws[i])
 			a.rotation.y = yaws[i] + PI
-			# The chest is opened as a little scene, to build curiosity: the runner
-			# crouches to it, it rattles and peeks open a crack of gold light, each
-			# time a little more; a held breath; then the lid flies back.
-			var lid: Node3D = a.get_meta("lid")
 			say("%s found a chest. What is inside?" % subj(p))
-			root.pose = "crouch"
-			root.express("wow")
-			await wait(0.3)
-			for k in (3 if not is_bot(p) else 1):
-				sfx.play("bump", -9.0 + k * 3.0, 0.9 + k * 0.2)
-				var rattle := a.create_tween()
-				rattle.tween_property(a, "rotation:z", 0.14 + k * 0.06, 0.05)
-				rattle.tween_property(a, "rotation:z", -0.14 - k * 0.06, 0.1)
-				rattle.tween_property(a, "rotation:z", 0.0, 0.05)
-				var peek := lid.create_tween()
-				peek.tween_property(lid, "rotation:x", 0.14 + k * 0.12, 0.1)
-				peek.tween_interval(0.22)
-				peek.tween_property(lid, "rotation:x", 0.0, 0.06)
-				burst(a.position + Vector3(0, 0.7, 0), GOLD.lightened(0.4), 5 + k * 4, 2.0 + k)
-				shake(0.05 + k * 0.05)
-				await wait(0.4)
-				sfx.play("step", -4.0, 0.7)
-				await wait(0.24 - k * 0.05)
-			await wait(0.3)  # a held breath
-			lid.create_tween().tween_property(lid, "rotation:x", 1.9, 0.3).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-			sfx.play("good")
-			sfx.play("coin", -2.0)
-			shake(0.25)
-			plume(a.position + Vector3(0, 0.7, 0), GOLD.lightened(0.3), 30, 3.2, 0.9, true)  # light pours out
-			root.pose = "cheer"
-			root.express("happy", 1.5)
+			await open_chest(a, p, 3 if not is_bot(p) else 1)
 			quip(p, "chest")
 			rival_says(p, "jealous", 0.45)
 			burst(a.position + Vector3(0, 0.8, 0), GOLD, 24, 5.0)
@@ -3966,6 +4093,40 @@ func mystery(p: Dictionary) -> void:
 	var out := a.create_tween()
 	out.tween_property(a, "scale", Vector3.ONE * 0.01, 0.25)
 	out.tween_callback(a.queue_free)
+
+
+func open_chest(a: Node3D, p: Dictionary, shakes: int) -> void:
+	# A chest is opened as a little scene, to build curiosity: the runner
+	# crouches to it, it rattles and peeks open a crack of gold light, each
+	# time a little more; a held breath; then the lid flies back.
+	var root: Node3D = p.a
+	var lid: Node3D = a.get_meta("lid")
+	root.pose = "crouch"
+	root.express("wow")
+	await wait(0.3)
+	for k in shakes:
+		sfx.play("bump", -9.0 + k * 3.0, 0.9 + k * 0.2)
+		var rattle := a.create_tween()
+		rattle.tween_property(a, "rotation:z", 0.14 + k * 0.06, 0.05)
+		rattle.tween_property(a, "rotation:z", -0.14 - k * 0.06, 0.1)
+		rattle.tween_property(a, "rotation:z", 0.0, 0.05)
+		var peek := lid.create_tween()
+		peek.tween_property(lid, "rotation:x", 0.14 + k * 0.12, 0.1)
+		peek.tween_interval(0.22)
+		peek.tween_property(lid, "rotation:x", 0.0, 0.06)
+		burst(a.position + Vector3(0, 0.7, 0), GOLD.lightened(0.4), 5 + k * 4, 2.0 + k)
+		shake(0.05 + k * 0.05)
+		await wait(0.4)
+		sfx.play("step", -4.0, 0.7)
+		await wait(0.24 - k * 0.05)
+	await wait(0.3)  # a held breath
+	lid.create_tween().tween_property(lid, "rotation:x", 1.9, 0.3).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	sfx.play("good")
+	sfx.play("coin", -2.0)
+	shake(0.25)
+	plume(a.position + Vector3(0, 0.7, 0), GOLD.lightened(0.3), 30, 3.2, 0.9, true)  # light pours out
+	root.pose = "cheer"
+	root.express("happy", 1.5)
 
 
 func subj(p: Dictionary) -> String:
@@ -4736,7 +4897,7 @@ func menu(page: String) -> void:
 			icon_button(_draw_back, menu.bind("main"), false)
 		"shop":
 			title(v, "POWER-UPS", 54, GOLD)
-			title(v, "Your coins: %d" % wallet, 30, cream)
+			title(v, "Coins: %d     Diamonds: %d" % [wallet, gems], 30, cream)
 			var goods := [["trophy", "SAFE ROLL", "Rolls again if you land on a trap", COST.reroll], ["s_rope", "RUN +3", "Go 3 slabs further this turn", COST.sprint], ["shield", "SHIELD", "Blocks the next hit", COST.shield], ["heart", "LIFE", "One more heart", COST.life]]
 			for g in goods:
 				var line := HBoxContainer.new()
@@ -4923,6 +5084,7 @@ func save_settings() -> void:
 	cf.set_value("game", "controls", controls)
 	cf.set_value("game", "path_len", path_len)
 	cf.set_value("game", "wallet", wallet)
+	cf.set_value("game", "gems", gems)
 	cf.set_value("game", "records", records)
 	cf.set_value("game", "stats", stats)
 	cf.save("user://settings.cfg")
@@ -4938,6 +5100,7 @@ func load_settings() -> void:
 		controls = cf.get_value("game", "controls", "tap")
 		path_len = clampi(int(cf.get_value("game", "path_len", 80)), 50, 80)
 		wallet = cf.get_value("game", "wallet", 0)
+		gems = cf.get_value("game", "gems", 0)
 		records = cf.get_value("game", "records", [])
 		stats = cf.get_value("game", "stats", {"races": 0, "wins": 0})
 	AudioServer.set_bus_mute(0, not sound_on)
@@ -5007,6 +5170,9 @@ func game_over(me: Dictionary) -> void:
 		var state := "treasure" if p.done else ("out" if p.out else "slab %d" % p.pos)
 		var c: Color = p.color
 		title(box_v, "%d.  %s  -  %s  -  %d coins" % [k + 1, "YOU" if not p.bot else p.name, state, p.coins], 26, c.lightened(0.45))
+	if me.has("prize"):
+		var won: Array = me.prize
+		title(box_v, "PRIZE  +%d coins%s" % [won[0], "  +%d diamond%s" % [won[1], "" if won[1] == 1 else "s"] if won[1] > 0 else ""], 28, Color("5fe0ff"))
 	title(box_v, "SCORE  %d" % score, 40, GOLD)
 	if rank == 0:
 		title(box_v, "NEW BEST!", 30, Color("7dff9b"))
