@@ -94,7 +94,10 @@ const FIT_PRICE := 5
 const GEM_COINS := 10  # coins for one diamond
 # The tutorial: one short card the first time each thing happens. id -> [icon, heading, text]
 const TIPS := {
-	"roll": ["trophy", "ROLL THE DIE", "Tap anywhere to roll. First to the treasure at the end of the path wins. The bar is your time to roll."],
+	"roll": [
+		["trophy", "ROLL THE DIE", "Tap anywhere to roll. First to the treasure at the end of the path wins. The bar is your time to roll."],
+		["coin", "HOW FAR YOU MOVE", "The number on the die, plus any bonus. Far behind the leader you get a tailwind of +2 or +3. A blue badge on the die shows the bonus and MOVE shows the total. Roll a 6 and you roll again."],
+	],
 	"card": ["s_mystery", "WHERE YOU LAND", "After each roll a card shows what the landing slab does, before you move."],
 	"bonus": ["coin", "TAILWIND", "Far behind the leader? You move extra slabs. The blue badge on the die shows the bonus."],
 	"rope": ["s_rope", "ROPE", "A rope swings you far ahead. The best slab to land on."],
@@ -107,7 +110,15 @@ const TIPS := {
 	"fight": ["heart", "TWO ON ONE SLAB", "Fight for it or share it. The loser is knocked back and loses a life. Your chance is on the button."],
 	"hurt": ["heart_empty", "YOU LOST A LIFE", "You have 3. You are wounded for 2 turns and fight worse. Lose them all and you use a respawn."],
 	"respawn": ["ankh", "RESPAWN", "You come back at the last torch you passed. No respawns left and you are out."],
-	"boulder": ["", "THE BOULDER", "It rolls after whoever is last. If it reaches you, you lose a life. Do not be last."],
+	"boulder": [
+		["", "THE BOULDER", "It sleeps for the first 3 rounds. From now on it takes its own turn after every round. The grey rock on the race bar shows where it is."],
+		["", "HOW IT MOVES", "It rolls forward 2 to 4 slabs each turn, more as the race goes on, and 2 extra when the last runner is far ahead of it. It never rolls back."],
+		["heart_empty", "IF IT REACHES YOU", "You lose a life and are knocked 3 slabs ahead of it. It chases whoever is last, so stay off the back of the race."],
+	],
+	"traps": [
+		["s_snake", "THE TRAPS", "Cobra: thrown back, up to 6 slabs. Tiger: lose a life and flee back 4. Cracked slab: lose a life. Spikes: react in time or lose a life. A trap can catch you only once."],
+		["s_spike", "HURDLES", "A log, a wall, a low beam or a swinging blade can block the path. React in time to clear it and earn a coin. Miss and you trip: your move ends there, but no life is lost."],
+	],
 	"coins": ["coin", "COINS AND DIAMONDS", "Coins buy BOOSTs in a race. Diamonds buy starters, upgrades and outfits in the lobby shop."],
 }
 # Tours of the menus, shown once each: page -> [what to light up, heading, text]
@@ -325,6 +336,7 @@ var go_now := false
 var choice := ""
 var life_btn: Button         # BOOST: opens the coin powers on your turn, only if you ask
 var life_open := false
+var life_tap := 0           # when BOOST was last toggled (ms): a phone can deliver one tap as two presses
 var pow_row: HBoxContainer  # decision buttons (coin powers, fight or pass), above the die
 var prompt: Control       # the big arrow that says which way to swipe
 var prompt_dir := ""
@@ -1815,6 +1827,9 @@ func _build_ui() -> void:
 	life_btn.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
 	life_btn.pressed.connect(func() -> void:
 		power_tap = clock
+		if Time.get_ticks_msec() - life_tap < 450:  # the same tap arriving again (touch, then its mouse copy)
+			return
+		life_tap = Time.get_ticks_msec()
 		life_open = not life_open
 		sfx.play("step"))
 	life_btn.visible = false
@@ -2368,10 +2383,13 @@ func tip(id: String) -> void:
 	seen[id] = true
 	save_settings()
 	var t: Array = TIPS[id]
+	var pages: Array = t if t[0] is Array else [t]  # some subjects take two or three cards
 	var lit: Control = {"roll": die, "bonus": die, "boost": life_btn, "hurt": me_bar, "respawn": me_bar, "coins": wallet_hud, "boulder": track, "card": card}.get(id)
-	await show_tip(t[0], t[1], t[2], lit)
-	if dead:
-		await never
+	for k in pages.size():
+		var pg: Array = pages[k]
+		await show_tip(pg[0], pg[1], pg[2], lit, "TIP" if pages.size() == 1 else "TIP %d / %d" % [k + 1, pages.size()])
+		if dead:
+			await never
 
 
 func ask_tutorial() -> void:
@@ -3126,6 +3144,7 @@ func ask_move(want: String, what: String) -> bool:
 	# swipe the right way ("up", "down", or "side" for left or right); a wrong
 	# swipe fails, a plain tap is ignored.
 	await tip("obstacle")
+	await tip("traps")
 	var swipe := controls == "swipe"
 	gesture = ""
 	jump_open = true
@@ -3450,7 +3469,10 @@ func roll(p: Dictionary, quick := false) -> int:
 					power_buttons(p)
 				else:
 					clear_buttons()
-			left -= get_process_delta_time()  # the clock keeps running: choose within the limit
+			if not shown:  # the roll clock waits while the BOOST panel is open
+				left -= get_process_delta_time()
+			elif Time.get_ticks_msec() - life_tap > 12000:  # ...but not for ever
+				life_open = false
 			set_meter(turn_bar, left / ROLL_TIME)
 			if choice != "":
 				buy(p, choice)
@@ -3973,6 +3995,8 @@ func land(p: Dictionary, safe := false) -> void:
 		p.hit[p.pos] = true
 	if not is_bot(p) and TIPS.has(kind):
 		await tip(kind)
+		if kind in HARMFUL:  # the first trap met: the others are introduced with it
+			await tip("traps")
 	match kind:
 		"rope":
 			await rope_cross(p)
