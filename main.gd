@@ -110,6 +110,33 @@ const TIPS := {
 	"boulder": ["", "THE BOULDER", "It rolls after whoever is last. If it reaches you, you lose a life. Do not be last."],
 	"coins": ["coin", "COINS AND DIAMONDS", "Coins buy BOOSTs in a race. Diamonds buy starters, upgrades and outfits in the lobby shop."],
 }
+# Tours of the menus, shown once each: page -> [what to light up, heading, text]
+const TOURS := {
+	"main": [
+		["purse", "YOUR PURSE", "Coins and diamonds you have won. They are kept between races."],
+		["play", "PLAY", "Pick your rivals and the path length, then race to the treasure."],
+		["shop", "DIAMOND SHOP", "Spend diamonds on starters, lasting upgrades and outfits."],
+		["help", "HOW TO PLAY", "Every slab and rule on one page. You can replay these tips from there."],
+		["gear", "SETTINGS", "Camera, character, tap or swipe controls, graphics and sound."],
+		["trophy", "LEADERBOARD", "Your best races and your win rate."],
+	],
+	"bots": [
+		["rivals", "RIVALS", "Choose 1 to 5 bots with the - and + keys. More rivals: more fights, and a longer race."],
+		["length", "PATH LENGTH", "Drag the handle: 50 slabs is a short race, 80 a long one. The line above shows the time it should take."],
+		["start", "START RACE", "Each race gets a new map, time of day and weather."],
+	],
+	"shop": [
+		["tabs", "THREE SHELVES", "Starters are used up by your next race. Upgrades are kept for good. Outfits change your colour."],
+		["panel", "BUYING", "Tap a price to buy with diamonds. A greyed price means you need more."],
+		["purse", "EARNING DIAMONDS", "Win a race for 3, come second for 1, and pick them up on the path."],
+	],
+	"settings": [
+		["panel", "SETTINGS", "Swipe controls make obstacles a skill: up to jump, down to slide, sideways to dodge. Lower graphics keep a phone cool."],
+	],
+	"ranks": [
+		["panel", "LEADERBOARD", "Your ten best races. Placing counts most, then coins, lives and respawns kept."],
+	],
+}
 const HEAL_TURNS := 2     # own turns a wound takes to heal; wounded runners fight worse
 const ROLL_TIME := 8.0   # seconds a player has to roll before the turn is lost
 const PIXEL := 2          # 3D is rendered at 1/PIXEL resolution for the pixel-art look
@@ -367,6 +394,9 @@ var tip_root: Control
 var tip_icon: TextureRect
 var tip_head: Label
 var tip_text: Label
+var tip_tag: Label          # "TIP" or "2 / 5" on a tour
+var tip_hole := Rect2()    # the part of the screen left lit: what the card is about
+var cam_follow := 5.0      # how fast the camera catches up with whoever it follows
 var tip_open := false
 var tip_since := 0
 var wallet_hud: Control    # in-race purse: coins and diamonds, under the pause button
@@ -2224,34 +2254,26 @@ func _draw_chip(k: int) -> void:
 
 
 func _build_tip() -> void:
+	# The tutorial layer: a dark backdrop over the whole screen with one lit
+	# window on what is being explained, a gold frame round it, and the card beside it.
 	tip_root = Control.new()
 	tip_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	tip_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	tip_root.mouse_filter = Control.MOUSE_FILTER_STOP  # nothing underneath can be pressed while a card is up
 	tip_root.visible = false
+	tip_root.draw.connect(_draw_tip)
 	bubble.get_parent().add_child(tip_root)
-	var dim := ColorRect.new()
-	dim.color = Color(0.03, 0.02, 0.01, 0.55)
-	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	tip_root.add_child(dim)
 	var card_p := PanelContainer.new()
 	card_p.name = "card"
-	card_p.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
-	card_p.offset_left = -300
-	card_p.offset_right = 300
-	card_p.offset_top = -150
-	card_p.offset_bottom = 150
-	card_p.grow_vertical = Control.GROW_DIRECTION_BOTH
-	var st := _round(Color(0.13, 0.09, 0.06, 0.97), 26, 6, Color("ffd76a"))
+	var st := _round(Color(0.13, 0.09, 0.06, 0.98), 26, 6, Color("ffd76a"))
 	for side in ["content_margin_left", "content_margin_right", "content_margin_top", "content_margin_bottom"]:
-		st.set(side, 26)
+		st.set(side, 24)
 	card_p.add_theme_stylebox_override("panel", st)
 	card_p.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	tip_root.add_child(card_p)
 	var col := VBoxContainer.new()
-	col.add_theme_constant_override("separation", 12)
+	col.add_theme_constant_override("separation", 10)
 	card_p.add_child(col)
-	title(col, "TIP", 20, Color("5fe0ff"))
+	tip_tag = title(col, "TIP", 20, Color("5fe0ff"))
 	var row := HBoxContainer.new()
 	row.alignment = BoxContainer.ALIGNMENT_CENTER
 	row.add_theme_constant_override("separation", 14)
@@ -2265,38 +2287,104 @@ func _build_tip() -> void:
 	tip_head = title(row, "", 40, GOLD)
 	tip_head.autowrap_mode = TextServer.AUTOWRAP_OFF
 	tip_text = title(col, "", 26, Color("fff3c4"))
-	tip_text.custom_minimum_size = Vector2(520, 0)
+	tip_text.custom_minimum_size = Vector2(540, 0)
 	var go := title(col, "TAP TO CONTINUE", 22, Color("7dff9b"))
 	var blink := go.create_tween().set_loops()
 	blink.tween_property(go, "modulate:a", 0.35, 0.5)
 	blink.tween_property(go, "modulate:a", 1.0, 0.5)
 
 
-func tip(id: String) -> void:
-	# The tutorial. The first time something happens to you, a card explains it
-	# and the game waits for a tap. Each card is shown once, ever.
-	if not tips_on or autoplay or seen.has(id) or results.visible or in_lobby:
+func _draw_tip() -> void:
+	var shade_c := Color(0.02, 0.015, 0.01, 0.78)
+	var h := tip_hole
+	if h.size == Vector2.ZERO:
+		tip_root.draw_rect(Rect2(-3000, -3000, 9000, 9000), shade_c)
 		return
-	seen[id] = true
-	save_settings()
+	# four slabs of shade round the lit window
+	tip_root.draw_rect(Rect2(-3000, -3000, 9000, 3000 + h.position.y), shade_c)
+	tip_root.draw_rect(Rect2(-3000, h.end.y, 9000, 6000), shade_c)
+	tip_root.draw_rect(Rect2(-3000, h.position.y, 3000 + h.position.x, h.size.y), shade_c)
+	tip_root.draw_rect(Rect2(h.end.x, h.position.y, 6000, h.size.y), shade_c)
+	var beat := absf(sin(clock * 4.0))
+	tip_root.draw_style_box(_round(Color(0, 0, 0, 0), 16, 5, Color("ffd76a").lerp(Color("fff8e1"), beat)), h.grow(3.0 + beat * 5.0))
+
+
+func show_tip(icon_id: String, head: String, text: String, target: Control = null, tag := "TIP") -> void:
 	if tip_root == null:
 		_build_tip()
-	var t: Array = TIPS[id]
-	tip_icon.texture = ui_tex(t[0]) if t[0] != "" else null
+	tip_icon.texture = ui_tex(icon_id) if icon_id != "" else null
 	tip_icon.visible = tip_icon.texture != null
-	tip_head.text = t[1]
-	tip_text.text = t[2]
-	tip_root.visible = true
+	tip_head.text = head
+	tip_text.text = text
+	tip_tag.text = tag
+	tip_hole = Rect2()
+	if is_instance_valid(target) and target.is_visible_in_tree():
+		var r := target.get_global_rect()
+		tip_hole = Rect2(r.position - tip_root.global_position, r.size).grow(10.0)
 	var card_p: Control = tip_root.get_node("card")
+	card_p.modulate.a = 0.0
+	tip_root.visible = true
+	tip_root.move_to_front()
+	tip_since = Time.get_ticks_msec()
+	tip_open = true
+	# the card takes its height from the new text: wrapped labels need a pass
+	# to learn their width, and a second for the panel to shrink to fit
+	for pass_k in 2:
+		card_p.size = Vector2(600, 0)
+		await get_tree().process_frame
+	card_p.size = Vector2(600, 0)
+	var vis := tip_root.size
+	var ch := card_p.size.y
+	var y := (vis.y - ch) / 2.0
+	if tip_hole.size != Vector2.ZERO:  # below what it explains if there is room, else above
+		y = tip_hole.end.y + 26.0
+		if y + ch > vis.y - 20.0:
+			y = tip_hole.position.y - ch - 26.0
+		if y < 20.0:  # the lit window fills the screen: sit over its lower part
+			y = vis.y - ch - 40.0
+	card_p.position = Vector2((vis.x - card_p.size.x) / 2.0, y)
+	card_p.modulate.a = 1.0
 	card_p.pivot_offset = card_p.size / 2.0
 	card_p.scale = Vector2(0.7, 0.7)
 	card_p.create_tween().tween_property(card_p, "scale", Vector2.ONE, 0.2).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 	sfx.play("good", -9.0, 1.2)
-	tip_since = Time.get_ticks_msec()
-	tip_open = true
-	while tip_open:
-		await frame()
+	while tip_open and is_inside_tree():
+		tip_root.queue_redraw()
+		await get_tree().process_frame
 	tip_root.visible = false
+
+
+func tip(id: String) -> void:
+	# The tutorial in a race. The first time something happens to you, a card
+	# explains it, the part of the screen it is about stays lit, and the game
+	# waits for a tap. Each card is shown once, ever.
+	if not tips_on or autoplay or seen.has(id) or results.visible or in_lobby:
+		return
+	seen[id] = true
+	save_settings()
+	var t: Array = TIPS[id]
+	var lit: Control = {"roll": die, "bonus": die, "boost": life_btn, "hurt": me_bar, "respawn": me_bar, "coins": wallet_hud, "boulder": track, "card": card}.get(id)
+	await show_tip(t[0], t[1], t[2], lit)
+	if dead:
+		await never
+
+
+func run_tour(page: String, marks: Dictionary) -> void:
+	# The tutorial in the menus: the first time a page is opened, its parts
+	# are lit and explained one after another.
+	var id := "tour_" + page
+	if not TOURS.has(page) or not tips_on or autoplay or seen.has(id) or not in_lobby:
+		return
+	seen[id] = true
+	save_settings()
+	await get_tree().process_frame  # the page has to be laid out before its parts can be pointed at
+	await get_tree().process_frame
+	var steps: Array = TOURS[page]
+	for k in steps.size():
+		var target: Variant = marks.get(steps[k][0])
+		if not is_instance_valid(target) or not in_lobby or not tips_on:  # the page was rebuilt or left meanwhile
+			continue
+		await show_tip("", steps[k][1], steps[k][2], target, "%d / %d" % [k + 1, steps.size()])
 
 
 func make_wallet(vertical: bool) -> Control:
@@ -2619,6 +2707,7 @@ func prepare_world() -> void:
 	bo = -6
 	round_no = 0
 	turn_speed = 1.0
+	cam_follow = 5.0
 	END = path_len
 	if OS.has_environment("VAULT_LEN"):
 		END = clampi(int(OS.get_environment("VAULT_LEN")), 20, 80)
@@ -2782,7 +2871,15 @@ func play() -> void:
 
 
 func take_turn(p: Dictionary) -> void:
+	# Hand-over: a plate in the runner's colour says whose turn it is, and the
+	# camera glides across to them instead of jumping, before anything happens.
 	focus_p = p
+	cam_follow = 1.8
+	show_card("", "YOUR TURN" if not is_bot(p) else "%s'S TURN" % p.name, "On slab %d" % p.pos, p.color.lightened(0.3), 1.1)
+	sfx.play("step", -6.0, 0.7)
+	refresh_ui(p)
+	await wait(1.1)
+	cam_follow = 5.0
 	if p.wounded > 0:  # one own turn closer to healed
 		p.wounded -= 1
 		if p.wounded == 0:
@@ -2812,7 +2909,7 @@ func take_turn(p: Dictionary) -> void:
 		elif behind == 0 and ahead > 0 and p.pos > 4:
 			quip(p, "last")
 	var again := true
-	turn_speed = 1.5 if is_bot(p) else 1.0  # rivals' turns run quicker: less watching, more playing
+	turn_speed = 1.2 if is_bot(p) else 1.0  # rivals' turns run a little quicker, but slow enough to follow
 	while again and active(p):
 		again = false
 		refresh_ui(p)
@@ -2844,7 +2941,7 @@ func take_turn(p: Dictionary) -> void:
 				die_bonus = boost
 				die.queue_redraw()
 			trail = show_trail(p, steps)
-			await wait(minf(preview(p, steps), 0.8))
+			await wait(minf(preview(p, steps), 1.1))
 		else:
 			# Your decision: after the roll you see where it leads, then tap to go,
 			# or spend coins to roll again, run 3 further, or protect yourself.
@@ -2898,7 +2995,7 @@ func take_turn(p: Dictionary) -> void:
 			await wait(0.5)
 	set_die(0)
 	spot_off()
-	await wait(0.6 if is_bot(p) else 1.0)  # hold on this runner so the result can sink in before the camera moves on
+	await wait(0.9 if is_bot(p) else 1.0)  # hold on this runner so the result can sink in before the camera moves on
 	turn_speed = 1.0
 
 
@@ -3261,8 +3358,10 @@ func roll(p: Dictionary, quick := false) -> int:
 		say("%s rolls" % p.name)
 		await wait(0.2)
 	else:
+		set_die(5)  # on show before the first card points at it
 		await tip("roll")
 		if round_no >= 1 and purse(p) >= cost("reroll"):  # from your second turn, so the first is not two cards
+			life_btn.visible = true  # so the card can point at it
 			await tip("boost")
 		say("Your turn. Roll before the bar runs out")
 		set_die(5)
@@ -3311,7 +3410,7 @@ func roll(p: Dictionary, quick := false) -> int:
 			return 0
 	var n := rng.randi_range(1, 6)
 	sfx.play("dice")
-	await roll3d(n, 0.6 if is_bot(p) else 1.4, not is_bot(p))  # the die is thrown and tumbles to rest: a moment of suspense
+	await roll3d(n, 0.8 if is_bot(p) else 1.4, not is_bot(p))  # the die is thrown and tumbles to rest: a moment of suspense
 	set_die(n)  # no extra pop: it has just landed
 	await wait(0.25)
 	return n
@@ -3573,7 +3672,7 @@ func stride(p: Dictionary, nxt: int) -> bool:
 	if style == "":
 		# a running stride: fast and low, just clearing the gap between slabs;
 		# it lifts more when the next slab is a step up
-		await hop(root, spot(p, nxt), 0.12 + maxf(0.0, dy) * 0.55 + (0.1 if dy < -0.2 else 0.0), 0.3 + absf(dy) * 0.08)
+		await hop(root, spot(p, nxt), 0.12 + maxf(0.0, dy) * 0.55 + (0.1 if dy < -0.2 else 0.0), 0.36 + absf(dy) * 0.08)
 		return true
 	# Parkour, in beats that can be followed: run up to the obstacle and coil;
 	# you make the move (tap, or swipe the right way); then the move itself, in
@@ -5022,7 +5121,7 @@ func menu_button(parent: Node, text: String, c: Color, cb: Callable, enabled := 
 	return b
 
 
-func icon_button(drawer: Callable, cb: Callable, right: bool, row := 0) -> void:
+func icon_button(drawer: Callable, cb: Callable, right: bool, row := 0) -> Button:
 	# round corner button with a drawn icon (gear, back arrow)
 	var b := Button.new()
 	b.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT if right else Control.PRESET_TOP_LEFT)
@@ -5039,6 +5138,7 @@ func icon_button(drawer: Callable, cb: Callable, right: bool, row := 0) -> void:
 	b.pressed.connect(func() -> void: sfx.play("step"))
 	b.pressed.connect(cb)
 	lobby.add_child(b)
+	return b
 
 
 func _draw_gear(b: Control) -> void:
@@ -5119,6 +5219,7 @@ func menu(page: String) -> void:
 	shade_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	lobby.add_child(shade_rect)
 
+	var marks := {}  # parts of this page a tour can light up
 	wallets = wallets.filter(func(w: Control) -> bool: return is_instance_valid(w) and not w.is_queued_for_deletion())
 	var purse_bar := make_wallet(false)
 	purse_bar.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
@@ -5127,6 +5228,7 @@ func menu(page: String) -> void:
 	purse_bar.offset_top = 86
 	purse_bar.offset_bottom = 132
 	lobby.add_child(purse_bar)
+	marks["purse"] = purse_bar
 	var col := VBoxContainer.new()
 	col.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	col.offset_left = 46
@@ -5157,21 +5259,23 @@ func menu(page: String) -> void:
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 20)
 	panel.add_child(v)
+	marks["panel"] = panel
 
 	match page:
 		"main":
-			menu_button(v, "PLAY", orange, menu.bind("bots"), true, 52).custom_minimum_size = Vector2(0, 132)
+			marks["play"] = menu_button(v, "PLAY", orange, menu.bind("bots"), true, 52)
+			marks["play"].custom_minimum_size = Vector2(0, 132)
 			var mp := menu_button(v, "MULTIPLAYER", wood, menu.bind("main"), false)
 			mp.draw.connect(_draw_soon.bind(mp))
-			menu_button(v, "DIAMOND SHOP", wood, menu.bind("shop"))
+			marks["shop"] = menu_button(v, "DIAMOND SHOP", wood, menu.bind("shop"))
 			var sup := menu_button(v, "SUPPORT ME", green, open_support, true, 34)
 			sup.custom_minimum_size = Vector2(0, 92)
 			sup.draw.connect(func() -> void:  # a heart either side of the words
 				for hx in [70.0, sup.size.x - 104.0]:
 					_icon(sup, "heart", Vector2(hx, sup.size.y / 2.0 - 22.0), 34, Color("e2463a")))
-			icon_button(_draw_gear, menu.bind("settings"), true)
-			icon_button(_draw_help, menu.bind("help"), false)
-			icon_button(_draw_trophy, menu.bind("ranks"), true, 1)
+			marks["gear"] = icon_button(_draw_gear, menu.bind("settings"), true)
+			marks["help"] = icon_button(_draw_help, menu.bind("help"), false)
+			marks["trophy"] = icon_button(_draw_trophy, menu.bind("ranks"), true, 1)
 		"bots":
 			title(v, "CHOOSE YOUR RIVALS", 46, GOLD)
 			var row := HBoxContainer.new()
@@ -5183,6 +5287,7 @@ func menu(page: String) -> void:
 			num.autowrap_mode = TextServer.AUTOWRAP_OFF
 			num.custom_minimum_size = Vector2(150, 0)
 			_key(menu_button(row, "+", wood, step_bots.bind(1), bot_count < 5, 70))
+			marks["rivals"] = row
 			var faces := Control.new()
 			faces.custom_minimum_size = Vector2(0, 52)
 			faces.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -5206,6 +5311,7 @@ func menu(page: String) -> void:
 			for part in ["grabber", "grabber_highlight"]:
 				sl.add_theme_icon_override(part, _knob())
 			v.add_child(sl)
+			marks["length"] = sl
 			var ends := HBoxContainer.new()
 			v.add_child(ends)
 			for e in [["50  SHORT", HORIZONTAL_ALIGNMENT_LEFT], ["LONG  80", HORIZONTAL_ALIGNMENT_RIGHT]]:
@@ -5220,7 +5326,8 @@ func menu(page: String) -> void:
 			sl.drag_ended.connect(func(_changed: bool) -> void:
 				save_settings()
 				prepare_world())  # the map behind the menu is rebuilt at the new length
-			menu_button(v, "START RACE", orange, begin_picked, true, 48).custom_minimum_size = Vector2(0, 124)
+			marks["start"] = menu_button(v, "START RACE", orange, begin_picked, true, 48)
+			marks["start"].custom_minimum_size = Vector2(0, 124)
 			icon_button(_draw_back, menu.bind("main"), false)
 		"help":
 			title(v, "HOW TO PLAY", 50, GOLD)
@@ -5295,6 +5402,7 @@ func menu(page: String) -> void:
 			var tabs := HBoxContainer.new()
 			tabs.add_theme_constant_override("separation", 10)
 			v.add_child(tabs)
+			marks["tabs"] = tabs
 			for t in [["shop", "STARTERS"], ["shop_up", "UPGRADES"], ["shop_fit", "OUTFITS"]]:
 				var tb := menu_button(tabs, t[1], green if page == t[0] else wood, menu.bind(t[0]), true, 22)
 				tb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -5346,6 +5454,7 @@ func menu(page: String) -> void:
 				if g[1] != "":
 					title(v, g[1], 18, Color("c9b98a"))
 			icon_button(_draw_back, menu.bind("main"), false)
+	run_tour(page, marks)  # first visit: its parts are lit and explained
 
 
 func _card_style(c: Color) -> StyleBox:
@@ -5476,7 +5585,7 @@ func estimate_minutes(slabs: int, bots: int) -> int:
 	# tailwinds, setbacks and lost turns are counted; a round is your own turn
 	# plus each bot's quicker one, plus the boulder.
 	var rounds := slabs / 3.4
-	return maxi(1, roundi(rounds * (12.0 + 5.5 * bots) / 60.0))
+	return maxi(1, roundi(rounds * (14.0 + 8.0 * bots) / 60.0))
 
 
 func open_support() -> void:
@@ -5848,7 +5957,7 @@ func _process(delta: float) -> void:
 		i = clampi(zoom_p.pos, 0, END)
 		want = dirs[i]
 	var fp: Vector3 = who.a.position
-	cam_base = cam_base.lerp(Vector3(fp.x, path[i].y, fp.z), minf(1.0, real * 5.0))
+	cam_base = cam_base.lerp(Vector3(fp.x, path[i].y, fp.z), minf(1.0, real * cam_follow))
 	cam_yaw = lerp_angle(cam_yaw, atan2(want.x, want.z), minf(1.0, real * 2.5))
 	cam_dir = Vector3(sin(cam_yaw), 0, cos(cam_yaw))
 	var z := smoothstep(0.0, 1.0, zoom_k)

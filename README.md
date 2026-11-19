@@ -35,8 +35,12 @@ Open the folder in Godot 4.7 and press Play, or from a terminal:
 - Land on an occupied slab and you choose: fight for it, or share it. The
   newcomer has the edge, but can lose.
 - Chests can hold a shield, a life or a respawn.
-- New players get a tutorial as they play: a short card the first time each
-  thing happens (Settings: TIPS; replay from HOW TO PLAY).
+- New players get a tutorial everywhere: each menu page is toured the first
+  time it is opened, and in a race a card explains each thing the first time
+  it happens. The screen dims and the part being explained stays lit.
+  (Settings: TIPS; replay from HOW TO PLAY.)
+- Each turn opens with a plate naming whose turn it is while the camera
+  glides to them.
 - Diamonds (race prizes and path pickups) buy starters, upgrades and
   outfits in the lobby's DIAMOND SHOP.
 
