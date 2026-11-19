@@ -415,6 +415,8 @@ var tip_tag: Label          # "TIP" or "2 / 5" on a tour
 var tip_hole := Rect2()    # the part of the screen left lit: what the card is about
 var cam_follow := 5.0      # how fast the camera catches up with whoever it follows
 var tip_open := false
+var tip_busy := false      # a card is being shown: the next one waits its turn
+var tip_wait := {}         # tips queued or on screen, so none is asked for twice
 var tip_since := 0
 var wallet_hud: Control    # in-race purse: coins and diamonds, under the pause button
 var wallets: Array[Control] = []  # every purse on screen (race HUD, lobby)
@@ -2309,7 +2311,7 @@ func _build_tip() -> void:
 	tip_text = title(col, "", 26, Color("fff3c4"))
 	tip_text.custom_minimum_size = Vector2(540, 0)
 	var go := title(col, "TAP TO CONTINUE", 22, Color("7dff9b"))
-	var blink := go.create_tween().set_loops()
+	var blink := go.create_tween().set_loops().set_ignore_time_scale(true)
 	blink.tween_property(go, "modulate:a", 0.35, 0.5)
 	blink.tween_property(go, "modulate:a", 1.0, 0.5)
 
@@ -2325,11 +2327,14 @@ func _draw_tip() -> void:
 	tip_root.draw_rect(Rect2(-3000, h.end.y, 9000, 6000), shade_c)
 	tip_root.draw_rect(Rect2(-3000, h.position.y, 3000 + h.position.x, h.size.y), shade_c)
 	tip_root.draw_rect(Rect2(h.end.x, h.position.y, 6000, h.size.y), shade_c)
-	var beat := absf(sin(clock * 4.0))
+	var beat := absf(sin(Time.get_ticks_msec() / 250.0))  # real time: the game clock is stopped under a card
 	tip_root.draw_style_box(_round(Color(0, 0, 0, 0), 16, 5, Color("ffd76a").lerp(Color("fff8e1"), beat)), h.grow(3.0 + beat * 5.0))
 
 
 func show_tip(icon_id: String, head: String, text: String, target: Control = null, tag := "TIP") -> void:
+	while tip_busy and is_inside_tree():  # one card at a time: this one waits for the last to be closed
+		await get_tree().process_frame
+	tip_busy = true
 	if tip_root == null:
 		_build_tip()
 	tip_icon.texture = ui_tex(icon_id) if icon_id != "" else null
@@ -2366,22 +2371,22 @@ func show_tip(icon_id: String, head: String, text: String, target: Control = nul
 	card_p.modulate.a = 1.0
 	card_p.pivot_offset = card_p.size / 2.0
 	card_p.scale = Vector2(0.7, 0.7)
-	card_p.create_tween().tween_property(card_p, "scale", Vector2.ONE, 0.2).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	card_p.create_tween().set_ignore_time_scale(true).tween_property(card_p, "scale", Vector2.ONE, 0.2).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 	sfx.play("good", -9.0, 1.2)
 	while tip_open and is_inside_tree():
 		tip_root.queue_redraw()
 		await get_tree().process_frame
 	tip_root.visible = false
+	tip_busy = false
 
 
 func tip(id: String) -> void:
 	# The tutorial in a race. The first time something happens to you, a card
 	# explains it, the part of the screen it is about stays lit, and the game
 	# waits for a tap. Each card is shown once, ever.
-	if not tips_on or not tips_asked or autoplay or seen.has(id) or results.visible or in_lobby:
+	if not tips_on or not tips_asked or autoplay or seen.has(id) or tip_wait.has(id) or results.visible or in_lobby:
 		return
-	seen[id] = true
-	save_settings()
+	tip_wait[id] = true
 	var t: Array = TIPS[id]
 	var pages: Array = t if t[0] is Array else [t]  # some subjects take two or three cards
 	var lit: Control = {"roll": die, "bonus": die, "boost": life_btn, "hurt": me_bar, "respawn": me_bar, "coins": wallet_hud, "boulder": track, "card": card}.get(id)
@@ -2390,6 +2395,9 @@ func tip(id: String) -> void:
 		await show_tip(pg[0], pg[1], pg[2], lit, "TIP" if pages.size() == 1 else "TIP %d / %d" % [k + 1, pages.size()])
 		if dead:
 			await never
+	seen[id] = true  # only once it has really been read
+	tip_wait.erase(id)
+	save_settings()
 
 
 func ask_tutorial() -> void:
@@ -3097,7 +3105,7 @@ func pay(p: Dictionary, n: int) -> void:
 	var here: int = mini(p.coins, n)
 	p.coins -= here
 	if not is_bot(p):
-		wallet -= n - here
+		wallet = maxi(0, wallet - (n - here))
 		save_settings()
 	sfx.play("coin", -2.0, 0.8)
 	refresh_ui()
@@ -3107,7 +3115,7 @@ func power_buttons(p: Dictionary) -> void:
 	# the lifelines, shown above the die only after BOOST is pressed
 	clear_buttons()
 	var have := purse(p)
-	if not p.safe:
+	if not p.safe and have >= cost("reroll"):
 		add_button("SAFE ROLL\n%d" % cost("reroll"), Color("3f7fe0"), func() -> void: choice = "reroll", 22)
 	if not p.sprint and have >= cost("sprint") and p.pos + 4 < END:
 		add_button("RUN +3\n%d" % cost("sprint"), Color("ee8a1c"), func() -> void: choice = "sprint", 22)
@@ -3118,6 +3126,9 @@ func power_buttons(p: Dictionary) -> void:
 
 
 func buy(p: Dictionary, what: String) -> void:
+	if purse(p) < cost(what):  # never on credit
+		sfx.play("bad", -6.0)
+		return
 	pay(p, cost(what))
 	var c := Color("5fe0ff")
 	match what:
@@ -5854,7 +5865,7 @@ func _input(event: InputEvent) -> void:
 	if not touch:
 		return
 	if tip_open:  # the tutorial card: this tap only closes it
-		if Time.get_ticks_msec() - tip_since > 450:
+		if Time.get_ticks_msec() - tip_since > 700:  # a tap meant for the game just before the card came up does not dismiss it
 			tip_open = false
 		return
 	touch_at = event.position
@@ -5888,7 +5899,8 @@ func _process(delta: float) -> void:
 	zoom_k = move_toward(zoom_k, zoom_to, real * 3.0)
 	slow_now = move_toward(slow_now, slow_to, real * 3.5)
 	if not stopping:
-		Engine.time_scale = slow_now * turn_speed
+		# a tutorial card freezes everything under it: timers, countdown bars, animation
+		Engine.time_scale = 0.0 if tip_open else slow_now * turn_speed
 	if prompt.visible:
 		prompt.queue_redraw()
 	if clock < maxf(wallet_pulse[0], wallet_pulse[1]) + 0.1:  # a pill is mid-bump
