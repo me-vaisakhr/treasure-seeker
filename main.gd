@@ -389,6 +389,11 @@ var perm := {}             # permanent upgrades owned: id -> true
 var fits: Array = ["red"]  # outfits owned
 var outfit := "red"        # outfit worn
 var tips_on := true         # first-time tips (the tutorial)
+var tips_asked := false     # the player has been asked whether they want the tutorial
+var asking := false
+var page_now := ""          # the menu page on screen, and the parts of it a tour can point at
+var marks_now := {}
+signal tutorial_answered
 var seen := {}             # tips already shown: id -> true, kept between races
 var tip_root: Control
 var tip_icon: TextureRect
@@ -2358,7 +2363,7 @@ func tip(id: String) -> void:
 	# The tutorial in a race. The first time something happens to you, a card
 	# explains it, the part of the screen it is about stays lit, and the game
 	# waits for a tap. Each card is shown once, ever.
-	if not tips_on or autoplay or seen.has(id) or results.visible or in_lobby:
+	if not tips_on or not tips_asked or autoplay or seen.has(id) or results.visible or in_lobby:
 		return
 	seen[id] = true
 	save_settings()
@@ -2369,9 +2374,68 @@ func tip(id: String) -> void:
 		await never
 
 
+func ask_tutorial() -> void:
+	# First launch: the tutorial is offered, not imposed. YES turns the tips on
+	# and the tour of this page starts; NO turns them off (Settings or HOW TO
+	# PLAY bring them back).
+	asking = true
+	var root := Control.new()
+	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	root.mouse_filter = Control.MOUSE_FILTER_STOP
+	bubble.get_parent().add_child(root)
+	var dim := ColorRect.new()
+	dim.color = Color(0.02, 0.015, 0.01, 0.78)
+	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	for side in ["offset_left", "offset_top"]:
+		dim.set(side, -3000)
+	for side in ["offset_right", "offset_bottom"]:
+		dim.set(side, 3000)
+	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(dim)
+	var card_p := PanelContainer.new()
+	var st := _round(Color(0.13, 0.09, 0.06, 0.98), 26, 6, Color("ffd76a"))
+	for side in ["content_margin_left", "content_margin_right", "content_margin_top", "content_margin_bottom"]:
+		st.set(side, 28)
+	card_p.add_theme_stylebox_override("panel", st)
+	card_p.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	card_p.offset_left = -300
+	card_p.offset_right = 300
+	card_p.grow_vertical = Control.GROW_DIRECTION_BOTH
+	root.add_child(card_p)
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 16)
+	card_p.add_child(col)
+	title(col, "WELCOME, SEEKER", 44, GOLD)
+	title(col, "Want a quick tutorial? Short tips will light up each part of the game the first time you meet it.", 26, Color("fff3c4")).custom_minimum_size = Vector2(540, 0)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 14)
+	col.add_child(row)
+	var want := [false]
+	var yes := menu_button(row, "YES, SHOW ME", Color("3fae5a"), func() -> void:
+		want[0] = true
+		tutorial_answered.emit(), true, 28)
+	var no := menu_button(row, "NO THANKS", Color("6b4a2c"), func() -> void: tutorial_answered.emit(), true, 28)
+	for b in [yes, no]:
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		b.custom_minimum_size = Vector2(0, 92)
+	title(col, "You can change this in Settings at any time.", 19, Color("c9b98a"))
+	await tutorial_answered
+	tips_asked = true
+	tips_on = want[0]
+	asking = false
+	save_settings()
+	root.queue_free()
+
+
 func run_tour(page: String, marks: Dictionary) -> void:
 	# The tutorial in the menus: the first time a page is opened, its parts
 	# are lit and explained one after another.
+	if not tips_asked and not autoplay and in_lobby:  # nothing is explained until they say they want it
+		if asking:
+			return
+		await ask_tutorial()
+		page = page_now  # whatever page is up now (it may have been rebuilt while the question was open)
+		marks = marks_now
 	var id := "tour_" + page
 	if not TOURS.has(page) or not tips_on or autoplay or seen.has(id) or not in_lobby:
 		return
@@ -5454,6 +5518,8 @@ func menu(page: String) -> void:
 				if g[1] != "":
 					title(v, g[1], 18, Color("c9b98a"))
 			icon_button(_draw_back, menu.bind("main"), false)
+	page_now = page
+	marks_now = marks
 	run_tour(page, marks)  # first visit: its parts are lit and explained
 
 
@@ -5549,6 +5615,7 @@ func set_female(on: bool) -> void:
 
 func set_tips(on: bool) -> void:
 	tips_on = on
+	tips_asked = true
 	save_settings()
 	menu("settings")
 
@@ -5556,6 +5623,7 @@ func set_tips(on: bool) -> void:
 func replay_tips() -> void:
 	seen.clear()
 	tips_on = true
+	tips_asked = true
 	save_settings()
 	sfx.play("good", -4.0)
 	menu("help")
@@ -5612,6 +5680,7 @@ func save_settings() -> void:
 	cf.set_value("game", "wallet", wallet)
 	cf.set_value("game", "gems", gems)
 	cf.set_value("game", "tips", tips_on)
+	cf.set_value("game", "tips_asked", tips_asked)
 	cf.set_value("game", "seen", seen)
 	cf.set_value("game", "stock", stock)
 	cf.set_value("game", "perm", perm)
@@ -5634,6 +5703,7 @@ func load_settings() -> void:
 		wallet = cf.get_value("game", "wallet", 0)
 		gems = cf.get_value("game", "gems", 0)
 		tips_on = cf.get_value("game", "tips", true)
+		tips_asked = cf.get_value("game", "tips_asked", false)
 		seen = cf.get_value("game", "seen", {})
 		stock = cf.get_value("game", "stock", {})
 		perm = cf.get_value("game", "perm", {})
