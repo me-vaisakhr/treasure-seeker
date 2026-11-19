@@ -20,9 +20,9 @@ const HARMFUL := ["spike", "crumble", "snake", "tiger"]
 # bigger mountain blocks. tufts: grass tufts (thousands of tiny boxes).
 # torches: every runner's torch casts real light at night (else only yours).
 const GFX := [
-	{"name": "LOW", "about": "30 fps, no shadows or glow. Coolest and longest battery", "fps": 30, "shadows": false, "glow": false, "shrink": 3, "range": 60.0, "lite": true, "tufts": false, "torches": false},
-	{"name": "MEDIUM", "about": "45 fps, glow but no shadows", "fps": 45, "shadows": false, "glow": true, "shrink": 2, "range": 90.0, "lite": false, "tufts": false, "torches": false},
-	{"name": "HIGH", "about": "60 fps, shadows, glow and full scenery", "fps": 60, "shadows": true, "glow": true, "shrink": 2, "range": 120.0, "lite": false, "tufts": true, "torches": true},
+	{"name": "LOW", "about": "30 fps, no shadows or glow. Coolest and longest battery", "fps": 30, "shadows": false, "glow": false, "range": 60.0, "lite": true, "tufts": false, "torches": false},
+	{"name": "MEDIUM", "about": "45 fps, glow but no shadows", "fps": 45, "shadows": false, "glow": true, "range": 90.0, "lite": false, "tufts": false, "torches": false},
+	{"name": "HIGH", "about": "60 fps, shadows, glow and full scenery", "fps": 60, "shadows": true, "glow": true, "range": 120.0, "lite": false, "tufts": true, "torches": true},
 ]
 const SUPPORT_URL := "https://buymeacoffee.com/vrkrishna9e"
 
@@ -164,7 +164,7 @@ const DARK := Color("3b4038")
 # whole low-res 3D image: richer colour, ordered dithering, soft vignette.
 const POST_SHADER := """
 shader_type canvas_item;
-uniform float levels = 16.0;
+uniform float levels = 28.0;
 uniform float sat = 1.3;
 const float bayer[16] = float[16](0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
 void fragment() {
@@ -176,7 +176,7 @@ void fragment() {
 	c = pow(c, vec3(1.08)) * 1.1;  // a touch more contrast
 	c *= 1.0 - dot(v, v) * 0.35;
 	int idx = int(mod(px.x, 4.0)) + int(mod(px.y, 4.0)) * 4;
-	float t = ((bayer[idx] + 0.5) / 16.0 - 0.5) * 0.5;
+	float t = ((bayer[idx] + 0.5) / 16.0 - 0.5) * 0.3;  // a light dither: texture, not noise
 	c = floor(c * levels + 0.5 + t) / levels;
 	COLOR = vec4(clamp(c, 0.0, 1.0), 1.0);
 }
@@ -366,6 +366,7 @@ var bubble_start := -9.0
 var bubble_q: Array = []   # lines waiting their turn: [speaker, text, seconds]
 var zoom_side := 1.9       # how far round to the side the close-up camera sits
 var gfx := 2                   # graphics level: index into GFX
+var pixel := 2                 # the 3D view is drawn at 1/pixel resolution: 3 chunky, 2 fine, 1 sharp (setting)
 var view_box: SubViewportContainer
 var female := false            # your character
 var pin_at := {}      # player name -> where their pin is drawn on the race bar (slabs, eased)
@@ -5068,7 +5069,7 @@ func fight(p: Dictionary, q: Dictionary) -> void:
 	ln.pose = ""
 	wn.position = homes[wn]
 	wn.rotation = Vector3(0, yaws[win.pos], 0)
-	view_box.stretch_shrink = GFX[gfx].shrink
+	view_box.stretch_shrink = pixel
 	var landed: int = lose.pos
 	await hurt(lose)
 	if active(lose) and lose.pos == landed:
@@ -5531,27 +5532,28 @@ func menu(page: String) -> void:
 			title(v, "Win races and pick up diamonds on the path to earn more.", 18, cream)
 			icon_button(_draw_back, menu.bind("main"), false)
 		"settings":
-			v.add_theme_constant_override("separation", 8)
-			title(v, "SETTINGS", 48, GOLD)
+			v.add_theme_constant_override("separation", 5)
+			title(v, "SETTINGS", 42, GOLD)
 			var groups := [
 				["TIPS", "A short card the first time each thing happens" if tips_on else "", [["ON", tips_on, set_tips.bind(true)], ["OFF", not tips_on, set_tips.bind(false)]]],
 				["CAMERA", "", [["FOLLOW TURN", view_mode == "turn", set_view.bind("turn")], ["MY PLAYER", view_mode == "mine", set_view.bind("mine")]]],
 				["YOUR CHARACTER", "", [["MALE", not female, set_female.bind(false)], ["FEMALE", female, set_female.bind(true)]]],
 				["CONTROLS", "One tap clears any obstacle" if controls == "tap" else "Swipe up to jump, down to slide, sideways to dodge", [["TAP", controls == "tap", set_controls.bind("tap")], ["SWIPE", controls == "swipe", set_controls.bind("swipe")]]],
 				["GRAPHICS", GFX[gfx].about, [["LOW", gfx == 0, set_gfx.bind(0)], ["MEDIUM", gfx == 1, set_gfx.bind(1)], ["HIGH", gfx == 2, set_gfx.bind(2)]]],
+				["PIXELS", {3: "Chunky pixel art. Coolest phone", 2: "Finer pixels", 1: "Full sharpness. Uses the most battery"}[pixel], [["CHUNKY", pixel == 3, set_pixel.bind(3)], ["FINE", pixel == 2, set_pixel.bind(2)], ["SHARP", pixel == 1, set_pixel.bind(1)]]],
 				["SOUND", "", [["ON", sound_on, toggle_sound if not sound_on else menu.bind("settings")], ["OFF", not sound_on, toggle_sound if sound_on else menu.bind("settings")]]],
 			]
 			for g in groups:
-				title(v, g[0], 24, cream)
+				title(v, g[0], 21, cream)
 				var row := HBoxContainer.new()
 				row.add_theme_constant_override("separation", 12)
 				v.add_child(row)
 				for o in g[2]:
 					var ob := menu_button(row, o[0], green if o[1] else wood, o[2], true, 26)
 					ob.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-					ob.custom_minimum_size = Vector2(0, 72)
+					ob.custom_minimum_size = Vector2(0, 60)
 				if g[1] != "":
-					title(v, g[1], 18, Color("c9b98a"))
+					title(v, g[1], 16, Color("c9b98a"))
 			icon_button(_draw_back, menu.bind("main"), false)
 	page_now = page
 	marks_now = marks
@@ -5630,7 +5632,7 @@ func apply_quality() -> void:
 	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
 	sun.directional_shadow_max_distance = 70.0
 	env.glow_enabled = q.glow
-	view_box.stretch_shrink = q.shrink
+	view_box.stretch_shrink = pixel
 
 
 func set_gfx(level: int) -> void:
@@ -5662,6 +5664,13 @@ func replay_tips() -> void:
 	save_settings()
 	sfx.play("good", -4.0)
 	menu("help")
+
+
+func set_pixel(n: int) -> void:
+	pixel = n
+	save_settings()
+	apply_quality()
+	menu("settings")
 
 
 func set_controls(mode: String) -> void:
@@ -5710,6 +5719,7 @@ func save_settings() -> void:
 	cf.set_value("game", "sound", sound_on)
 	cf.set_value("game", "female", female)
 	cf.set_value("game", "gfx", gfx)
+	cf.set_value("game", "pixel", pixel)
 	cf.set_value("game", "controls", controls)
 	cf.set_value("game", "path_len", path_len)
 	cf.set_value("game", "wallet", wallet)
@@ -5733,6 +5743,7 @@ func load_settings() -> void:
 		sound_on = cf.get_value("game", "sound", true)
 		female = cf.get_value("game", "female", false)
 		gfx = clampi(int(cf.get_value("game", "gfx", gfx)), 0, GFX.size() - 1)
+		pixel = clampi(int(cf.get_value("game", "pixel", 2)), 1, 3)
 		controls = cf.get_value("game", "controls", "tap")
 		path_len = clampi(int(cf.get_value("game", "path_len", 80)), 50, 80)
 		wallet = cf.get_value("game", "wallet", 0)
