@@ -35,6 +35,10 @@ Open the folder in Godot 4.7 and press Play, or from a terminal:
 - Land on an occupied slab and you choose: fight for it, or share it. The
   newcomer has the edge, but can lose.
 - Chests can hold a shield, a life or a respawn.
+- New players get a tutorial as they play: a short card the first time each
+  thing happens (Settings: TIPS; replay from HOW TO PLAY).
+- Diamonds (race prizes and path pickups) buy starters, upgrades and
+  outfits in the lobby's DIAMOND SHOP.
 
 Play against 1 to 5 bots, on a path of 50 to 80 slabs (picked with the
 rivals; the lobby shows the expected race time). Bots take their turns

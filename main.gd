@@ -92,6 +92,24 @@ const UPGRADES := [["heart", "heart", "TOUGH", "Always start with 4 hearts", 15]
 const FITS := {"red": ["RED", Color("e2463a")], "ember": ["EMBER", Color("ff7a1a")], "jade": ["JADE", Color("16b8a6")], "ivory": ["IVORY", Color("efe6d0")], "shadow": ["SHADOW", Color("4a4f5c")]}
 const FIT_PRICE := 5
 const GEM_COINS := 10  # coins for one diamond
+# The tutorial: one short card the first time each thing happens. id -> [icon, heading, text]
+const TIPS := {
+	"roll": ["trophy", "ROLL THE DIE", "Tap anywhere to roll. First to the treasure at the end of the path wins. The bar is your time to roll."],
+	"card": ["s_mystery", "WHERE YOU LAND", "After each roll a card shows what the landing slab does, before you move."],
+	"bonus": ["coin", "TAILWIND", "Far behind the leader? You move extra slabs. The blue badge on the die shows the bonus."],
+	"rope": ["s_rope", "ROPE", "A rope swings you far ahead. The best slab to land on."],
+	"snake": ["s_snake", "COBRA", "The cobra throws you back down the path. It can only catch you once."],
+	"tiger": ["s_tiger", "TIGER", "A tiger ambush costs a life and sends you back 4 slabs."],
+	"crumble": ["s_crumble", "CRACKED SLAB", "It gives way under you: lose a life."],
+	"mystery": ["s_mystery", "MYSTERY SLAB", "An animal helps or robs you, or a chest holds a gift."],
+	"obstacle": ["s_spike", "OBSTACLE AHEAD", "React in time when the prompt appears. Miss spikes and you lose a life. Miss a hurdle and your move ends."],
+	"boost": ["coin", "BOOST", "Spend coins before you roll: a safe roll, 3 extra slabs, a shield or a life. Optional."],
+	"fight": ["heart", "TWO ON ONE SLAB", "Fight for it or share it. The loser is knocked back and loses a life. Your chance is on the button."],
+	"hurt": ["heart_empty", "YOU LOST A LIFE", "You have 3. You are wounded for 2 turns and fight worse. Lose them all and you use a respawn."],
+	"respawn": ["ankh", "RESPAWN", "You come back at the last torch you passed. No respawns left and you are out."],
+	"boulder": ["", "THE BOULDER", "It rolls after whoever is last. If it reaches you, you lose a life. Do not be last."],
+	"coins": ["coin", "COINS AND DIAMONDS", "Coins buy BOOSTs in a race. Diamonds buy starters, upgrades and outfits in the lobby shop."],
+}
 const HEAL_TURNS := 2     # own turns a wound takes to heal; wounded runners fight worse
 const ROLL_TIME := 8.0   # seconds a player has to roll before the turn is lost
 const PIXEL := 2          # 3D is rendered at 1/PIXEL resolution for the pixel-art look
@@ -343,6 +361,14 @@ var stock := {}            # race starters owned: id -> how many (used one per r
 var perm := {}             # permanent upgrades owned: id -> true
 var fits: Array = ["red"]  # outfits owned
 var outfit := "red"        # outfit worn
+var tips_on := true         # first-time tips (the tutorial)
+var seen := {}             # tips already shown: id -> true, kept between races
+var tip_root: Control
+var tip_icon: TextureRect
+var tip_head: Label
+var tip_text: Label
+var tip_open := false
+var tip_since := 0
 var wallet_hud: Control    # in-race purse: coins and diamonds, under the pause button
 var wallets: Array[Control] = []  # every purse on screen (race HUD, lobby)
 var wallet_pulse := [-9.0, -9.0]  # until when the coin / diamond pill is bumped (something just landed in it)
@@ -2197,6 +2223,82 @@ func _draw_chip(k: int) -> void:
 		c.draw_rect(Rect2(0, oy, w, c.size.y - 8), Color(0.1, 0.1, 0.1, 0.6))
 
 
+func _build_tip() -> void:
+	tip_root = Control.new()
+	tip_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	tip_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	tip_root.visible = false
+	bubble.get_parent().add_child(tip_root)
+	var dim := ColorRect.new()
+	dim.color = Color(0.03, 0.02, 0.01, 0.55)
+	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	tip_root.add_child(dim)
+	var card_p := PanelContainer.new()
+	card_p.name = "card"
+	card_p.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	card_p.offset_left = -300
+	card_p.offset_right = 300
+	card_p.offset_top = -150
+	card_p.offset_bottom = 150
+	card_p.grow_vertical = Control.GROW_DIRECTION_BOTH
+	var st := _round(Color(0.13, 0.09, 0.06, 0.97), 26, 6, Color("ffd76a"))
+	for side in ["content_margin_left", "content_margin_right", "content_margin_top", "content_margin_bottom"]:
+		st.set(side, 26)
+	card_p.add_theme_stylebox_override("panel", st)
+	card_p.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	tip_root.add_child(card_p)
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 12)
+	card_p.add_child(col)
+	title(col, "TIP", 20, Color("5fe0ff"))
+	var row := HBoxContainer.new()
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("separation", 14)
+	col.add_child(row)
+	tip_icon = TextureRect.new()
+	tip_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	tip_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	tip_icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	tip_icon.custom_minimum_size = Vector2(72, 72)
+	row.add_child(tip_icon)
+	tip_head = title(row, "", 40, GOLD)
+	tip_head.autowrap_mode = TextServer.AUTOWRAP_OFF
+	tip_text = title(col, "", 26, Color("fff3c4"))
+	tip_text.custom_minimum_size = Vector2(520, 0)
+	var go := title(col, "TAP TO CONTINUE", 22, Color("7dff9b"))
+	var blink := go.create_tween().set_loops()
+	blink.tween_property(go, "modulate:a", 0.35, 0.5)
+	blink.tween_property(go, "modulate:a", 1.0, 0.5)
+
+
+func tip(id: String) -> void:
+	# The tutorial. The first time something happens to you, a card explains it
+	# and the game waits for a tap. Each card is shown once, ever.
+	if not tips_on or autoplay or seen.has(id) or results.visible or in_lobby:
+		return
+	seen[id] = true
+	save_settings()
+	if tip_root == null:
+		_build_tip()
+	var t: Array = TIPS[id]
+	tip_icon.texture = ui_tex(t[0]) if t[0] != "" else null
+	tip_icon.visible = tip_icon.texture != null
+	tip_head.text = t[1]
+	tip_text.text = t[2]
+	tip_root.visible = true
+	var card_p: Control = tip_root.get_node("card")
+	card_p.pivot_offset = card_p.size / 2.0
+	card_p.scale = Vector2(0.7, 0.7)
+	card_p.create_tween().tween_property(card_p, "scale", Vector2.ONE, 0.2).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	sfx.play("good", -9.0, 1.2)
+	tip_since = Time.get_ticks_msec()
+	tip_open = true
+	while tip_open:
+		await frame()
+	tip_root.visible = false
+
+
 func make_wallet(vertical: bool) -> Control:
 	var c := Control.new()
 	c.set_meta("vertical", vertical)
@@ -2754,9 +2856,12 @@ func take_turn(p: Dictionary) -> void:
 			die.queue_redraw()
 			if die_bonus > 0:
 				say("You move %d + %d = %d slabs" % [n, die_bonus, steps])
+				await tip("bonus")
 			var spoke: bool = await react(p, n, steps)
 			trail = show_trail(p, steps)
 			var hold: float = preview(p, steps, spoke)
+			if hold > 1.0:  # a landing card is up
+				await tip("card")
 			if p.safe and is_bad(p, steps):  # the safe roll they bought: thrown again, once
 				await wait(hold)
 				popup(p.a.position, "SAFE ROLL!", Color("5fe0ff"))
@@ -2859,6 +2964,7 @@ func ask_move(want: String, what: String) -> bool:
 	# A timed input from the player. Tap controls: any tap. Swipe controls: a
 	# swipe the right way ("up", "down", or "side" for left or right); a wrong
 	# swipe fails, a plain tap is ignored.
+	await tip("obstacle")
 	var swipe := controls == "swipe"
 	gesture = ""
 	jump_open = true
@@ -3155,6 +3261,9 @@ func roll(p: Dictionary, quick := false) -> int:
 		say("%s rolls" % p.name)
 		await wait(0.2)
 	else:
+		await tip("roll")
+		if round_no >= 1 and purse(p) >= cost("reroll"):  # from your second turn, so the first is not two cards
+			await tip("boost")
 		say("Your turn. Roll before the bar runs out")
 		set_die(5)
 		lbl_hint.visible = true
@@ -3699,6 +3808,8 @@ func land(p: Dictionary, safe := false) -> void:
 			await wait(0.5)
 			return
 		p.hit[p.pos] = true
+	if not is_bot(p) and TIPS.has(kind):
+		await tip(kind)
 	match kind:
 		"rope":
 			await rope_cross(p)
@@ -3721,6 +3832,7 @@ func earn(p: Dictionary, n: int) -> void:
 	burst(p.a.position + Vector3(0, 1.2, 0), GOLD, 6, 3.0)
 	if not is_bot(p):
 		fly_to_wallet(0, n, p.a.position + Vector3(0, 1.2, 0))
+		tip("coins")  # not waited for: the card comes up while the coins fly
 	if is_bot(p) and p.coins >= 10 and p.hearts < 5:  # bots turn ten coins into a life; you choose what to buy
 		p.coins -= 10
 		p.hearts += 1
@@ -3928,6 +4040,8 @@ func hurt(p: Dictionary) -> String:
 	refresh_ui()
 	await wait(0.55)
 	p.a.pose = ""
+	if not is_bot(p):
+		await tip("hurt")
 	if p.hearts > 0:
 		return "hit"
 	var cp: int = (p.pos / 5) * 5
@@ -3991,6 +4105,7 @@ func lose_all(p: Dictionary, at_slab: int) -> void:
 		say("%s ran out of lives. Respawns left: %d" % [subj(p), p.revives])
 		if not p.bot:
 			announce("RESPAWN USED", Color("5fe0ff"))
+			await tip("respawn")
 		refresh_ui()
 		await wait(0.9)
 		await reborn(p, at_slab)
@@ -4610,6 +4725,7 @@ func bump(p: Dictionary) -> void:
 
 
 func ask_fight(q: Dictionary, odds: float) -> bool:
+	await tip("fight")
 	choice = ""
 	clear_buttons()
 	say("%s is on this slab" % q.name.capitalize())
@@ -4772,6 +4888,7 @@ func boulder_turn() -> void:
 			sfx.play("boulder", -4.0)
 			shake(0.3)
 			await wait(2.2)
+			await tip("boulder")
 		return
 	for p in players:  # nobody may be at or behind it
 		if active(p) and p.pos <= bo + 1:
@@ -5126,7 +5243,9 @@ func menu(page: String) -> void:
 				line.add_child(words)
 				title(words, g[1], 25, cream).horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 				title(words, g[2], 19, Color("c9b98a")).horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-			v.add_theme_constant_override("separation", 8)
+			v.add_theme_constant_override("separation", 6)
+			var again := menu_button(v, "REPLAY TIPS IN NEXT RACE" if not seen.is_empty() or not tips_on else "TIPS WILL SHOW AS YOU PLAY", green, replay_tips, not seen.is_empty() or not tips_on, 24)
+			again.custom_minimum_size = Vector2(0, 66)
 			icon_button(_draw_back, menu.bind("main"), false)
 		"ranks":
 			title(v, "LEADERBOARD", 50, GOLD)
@@ -5208,6 +5327,7 @@ func menu(page: String) -> void:
 			v.add_theme_constant_override("separation", 8)
 			title(v, "SETTINGS", 48, GOLD)
 			var groups := [
+				["TIPS", "A short card the first time each thing happens" if tips_on else "", [["ON", tips_on, set_tips.bind(true)], ["OFF", not tips_on, set_tips.bind(false)]]],
 				["CAMERA", "", [["FOLLOW TURN", view_mode == "turn", set_view.bind("turn")], ["MY PLAYER", view_mode == "mine", set_view.bind("mine")]]],
 				["YOUR CHARACTER", "", [["MALE", not female, set_female.bind(false)], ["FEMALE", female, set_female.bind(true)]]],
 				["CONTROLS", "One tap clears any obstacle" if controls == "tap" else "Swipe up to jump, down to slide, sideways to dodge", [["TAP", controls == "tap", set_controls.bind("tap")], ["SWIPE", controls == "swipe", set_controls.bind("swipe")]]],
@@ -5318,6 +5438,20 @@ func set_female(on: bool) -> void:
 	menu("settings")
 
 
+func set_tips(on: bool) -> void:
+	tips_on = on
+	save_settings()
+	menu("settings")
+
+
+func replay_tips() -> void:
+	seen.clear()
+	tips_on = true
+	save_settings()
+	sfx.play("good", -4.0)
+	menu("help")
+
+
 func set_controls(mode: String) -> void:
 	controls = mode
 	save_settings()
@@ -5368,6 +5502,8 @@ func save_settings() -> void:
 	cf.set_value("game", "path_len", path_len)
 	cf.set_value("game", "wallet", wallet)
 	cf.set_value("game", "gems", gems)
+	cf.set_value("game", "tips", tips_on)
+	cf.set_value("game", "seen", seen)
 	cf.set_value("game", "stock", stock)
 	cf.set_value("game", "perm", perm)
 	cf.set_value("game", "fits", fits)
@@ -5388,6 +5524,8 @@ func load_settings() -> void:
 		path_len = clampi(int(cf.get_value("game", "path_len", 80)), 50, 80)
 		wallet = cf.get_value("game", "wallet", 0)
 		gems = cf.get_value("game", "gems", 0)
+		tips_on = cf.get_value("game", "tips", true)
+		seen = cf.get_value("game", "seen", {})
 		stock = cf.get_value("game", "stock", {})
 		perm = cf.get_value("game", "perm", {})
 		fits = cf.get_value("game", "fits", ["red"])
@@ -5511,6 +5649,10 @@ func _input(event: InputEvent) -> void:
 			gesture = g
 		return
 	if not touch:
+		return
+	if tip_open:  # the tutorial card: this tap only closes it
+		if Time.get_ticks_msec() - tip_since > 450:
+			tip_open = false
 		return
 	touch_at = event.position
 	touching = true
