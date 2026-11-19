@@ -54,7 +54,14 @@ https://me-vaisakhr.github.io/treasure-seeker/
 
 The web build is made with
 
-    godot --headless --path . --export-release Web build/web/index.html
+    sh tools/export_web.sh
+
+which runs the Godot export and adds the boot intro video (`web/intro.mp4`),
+played over the page while the engine loads in place of the progress bar.
+
+Outside the browser the same intro plays on launch as an image sequence
+(`splash/`, 15 frames a second, with `splash/intro.ogg`); tap to skip. It is
+left out of the web package, which uses the video instead.
 
 and published from the `gh-pages` branch. It is built without threads, which
 GitHub Pages requires. On a wide window the world fills the view and the

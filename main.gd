@@ -107,7 +107,8 @@ const TIPS := {
 	"mystery": ["s_mystery", "MYSTERY SLAB", "An animal helps or robs you, or a chest holds a gift."],
 	"obstacle": ["s_spike", "OBSTACLE AHEAD", "React in time when the prompt appears. Miss spikes and you lose a life. Miss a hurdle and your move ends."],
 	"boost": ["coin", "BOOST", "Spend coins before you roll: a safe roll, 3 extra slabs, a shield or a life. Optional."],
-	"fight": ["heart", "TWO ON ONE SLAB", "Fight for it or share it. The loser is knocked back and loses a life. Your chance is on the button."],
+	"fight": ["heart", "TWO ON ONE SLAB", "Fight for it or share it. The loser is knocked back and loses a life. The button shows how strong you are against them."],
+	"mash": ["heart", "TAP TO WIN", "Tap as fast as you can to fill the bar before the time runs out. If you are wounded or have fewer hearts, each tap fills less."],
 	"hurt": ["heart_empty", "YOU LOST A LIFE", "You have 3. You are wounded for 2 turns and fight worse. Lose them all and you use a respawn."],
 	"respawn": ["ankh", "RESPAWN", "You come back at the last torch you passed. No respawns left and you are out."],
 	"boulder": [
@@ -148,12 +149,13 @@ const TOURS := {
 		["panel", "LEADERBOARD", "Your ten best races. Placing counts most, then coins, lives and respawns kept."],
 	],
 }
+const WELCOME_COINS := 10   # a gift on the first launch
 const HEAL_TURNS := 2     # own turns a wound takes to heal; wounded runners fight worse
 const ROLL_TIME := 8.0   # seconds a player has to roll before the turn is lost
 const PIXEL := 2          # 3D is rendered at 1/PIXEL resolution for the pixel-art look
 
 const STONE := Color("f2c66e")
-const CRUMBLE := Color("8a5f45")
+const CRUMBLE := Color("8f8a80")  # cracked slabs and their rubble: weathered grey
 const SNAKE := Color("3f6b3a")
 const MYSTERY := Color("7d55c7")
 const GOLD := Color("e8b530")
@@ -306,6 +308,7 @@ var zoom_p: Dictionary = {}
 var slow_to := 1.0         # game speed wanted (1 normal, lower = slow motion)
 var slow_now := 1.0
 var dead := false          # this race has been abandoned (restart / exit): all its routines must stop
+static var splash_done := false  # the intro plays once per launch, not after every scene reload
 static var boot_bots := 0  # survives a scene reload: start a race straight away with this many bots
 var ui_layer: SubViewport  # the 2D viewport all menus and HUD live in
 var safe: Control          # HUD parent, inset to clear the notch and the home bar
@@ -402,6 +405,7 @@ var perm := {}             # permanent upgrades owned: id -> true
 var fits: Array = ["red"]  # outfits owned
 var outfit := "red"        # outfit worn
 var tips_on := true         # first-time tips (the tutorial)
+var gifted := false         # the welcome gift of coins has been given
 var tips_asked := false     # the player has been asked whether they want the tutorial
 var asking := false
 var page_now := ""          # the menu page on screen, and the parts of it a tour can point at
@@ -415,6 +419,19 @@ var tip_text: Label
 var tip_tag: Label          # "TIP" or "2 / 5" on a tour
 var tip_hole := Rect2()    # the part of the screen left lit: what the card is about
 var cam_follow := 5.0      # how fast the camera catches up with whoever it follows
+var beat_pulse := 0.0       # 1 at each thump, falling away: drives the red vignette, the zoom and the heart
+var beat_power := 1.0
+var beat_frac := 0.0        # share of the whole countdown left, for the clock face
+var beat_tick := 0
+var beat_secs := -1.0       # seconds left, shown in the heart (-1: no number)
+var beat_show_until := 0
+var beat_ui: Control        # the beating heart with the seconds left
+var vig: ColorRect          # red vignette round the edge of the screen
+var fight_chain := 0        # fights so far this turn: a knock-on brawl stops after two
+var beat_at := 0             # when the next heartbeat of a countdown is due (ms)
+var mash_open := false     # a fight is being decided: every tap counts
+var mash_taps := 0
+var mash_last := 0
 var tip_open := false
 var tip_busy := false      # a card is being shown: the next one waits its turn
 var tip_wait := {}         # tips queued or on screen, so none is asked for twice
@@ -455,6 +472,7 @@ func _ready() -> void:
 		begin(int(OS.get_environment("VAULT_BOTS")) if OS.has_environment("VAULT_BOTS") else 3)
 	else:
 		show_lobby()
+		play_splash()
 		if OS.has_environment("VAULT_MENU"):  # dev: open a menu page directly for screenshots
 			menu(OS.get_environment("VAULT_MENU"))
 	if OS.has_environment("VAULT_ZOO"):  # dev: animals lined up side-on for inspection ("monkey,gorilla,tiger,elephant,cobra")
@@ -593,6 +611,141 @@ func hop(node: Node3D, to: Vector3, arc: float, dur: float) -> void:
 func wind(t: float) -> Vector3:
 	# One shared wind for cloth, ropes, leaves and trees.
 	return Vector3(0.94, 0, 0.33) * (2.5 + 1.5 * sin(t * 0.6) + 0.8 * sin(t * 1.9))
+
+
+func _build_beat() -> void:
+	var layer: Node = flash_rect.get_parent()
+	vig = ColorRect.new()
+	vig.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	vig.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var sh := Shader.new()
+	sh.code = """
+shader_type canvas_item;
+uniform float power = 0.0;
+void fragment() {
+	vec2 v = UV - 0.5;
+	float d = smoothstep(0.08, 0.5, dot(v, v) * 2.0);
+	COLOR = vec4(0.78, 0.0, 0.04, clamp(d * power, 0.0, 0.9));
+}
+"""
+	var vm := ShaderMaterial.new()
+	vm.shader = sh
+	vig.material = vm
+	layer.add_child(vig)
+	layer.move_child(vig, flash_rect.get_index())
+	beat_ui = Control.new()
+	beat_ui.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
+	beat_ui.offset_left = -110
+	beat_ui.offset_right = 110
+	beat_ui.offset_top = 300
+	beat_ui.offset_bottom = 520
+	beat_ui.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	beat_ui.visible = false
+	beat_ui.draw.connect(_draw_clock)
+	safe.add_child(beat_ui)
+
+
+func _draw_clock() -> void:
+	# A stopwatch: the red wedge is the time left and shrinks, the hand sweeps
+	# once a second, the seconds are written in the middle. It swells with each tick.
+	var c := beat_ui
+	var mid := c.size / 2.0
+	var r := 74.0 * (1.0 + 0.1 * beat_pulse)
+	var dark := Color("2a2118")
+	var gold := Color("ffd76a")
+	c.draw_rect(Rect2(mid.x - 13, mid.y - r - 26, 26, 22), dark)  # crown
+	c.draw_rect(Rect2(mid.x - 8, mid.y - r - 22, 16, 14), gold)
+	c.draw_circle(mid, r + 9, dark)
+	c.draw_circle(mid, r + 4, gold)
+	c.draw_circle(mid, r - 3, Color("fff3c4"))
+	var share := clampf(beat_frac, 0.0, 1.0)
+	if share > 0.01:  # the time left
+		var pts := PackedVector2Array([mid])
+		var steps := maxi(3, int(40 * share))
+		for k in steps + 1:
+			var a := -PI / 2.0 + TAU * share * k / steps
+			pts.append(mid + Vector2(cos(a), sin(a)) * (r - 7))
+		c.draw_colored_polygon(pts, Color(0.88, 0.16, 0.14, 0.75))
+	for k in 12:  # hour marks
+		var a := TAU * k / 12.0
+		var dir := Vector2(cos(a), sin(a))
+		c.draw_line(mid + dir * (r - 14), mid + dir * (r - 5), dark, 3.0)
+	if beat_secs >= 0.0:
+		var hand := -PI / 2.0 + TAU * (1.0 - fposmod(beat_secs, 1.0))
+		c.draw_line(mid, mid + Vector2(cos(hand), sin(hand)) * (r - 16), dark, 4.0)
+		c.draw_circle(mid, 6, dark)
+		var txt := str(ceili(beat_secs))
+		var fs := int(58.0 * (1.0 + 0.2 * beat_pulse))
+		c.draw_string_outline(ui_font, Vector2(0, mid.y + fs * 0.34), txt, HORIZONTAL_ALIGNMENT_CENTER, c.size.x, fs, 14, Color("fff8e1"))
+		c.draw_string(ui_font, Vector2(0, mid.y + fs * 0.34), txt, HORIZONTAL_ALIGNMENT_CENTER, c.size.x, fs, Color("b3121a"))
+
+
+func heartbeat(frac: float, from := 0.4, secs := -1.0) -> void:
+	# Called every frame of a countdown with the share of time left (1..0).
+	# In the last stretch the game has a pulse: a heart beats in the middle of
+	# the screen with the seconds left in it, the edges of the screen flush
+	# red, the camera pushes in with each thump and the die jumps. All of it
+	# faster and stronger as the time runs out.
+	if frac > from or frac <= 0.0 or tip_open:
+		return
+	if vig == null:
+		_build_beat()
+	var now := Time.get_ticks_msec()
+	beat_secs = secs
+	beat_frac = frac
+	beat_show_until = now + 400
+	if now < beat_at:
+		return
+	var k := 1.0 - frac / from  # 0 at the first beat .. 1 at the end
+	beat_at = now + int(lerpf(760.0, 300.0, k))
+	beat_power = 0.75 + 0.75 * k
+	beat_pulse = 1.0
+	beat_tick += 1
+	sfx.play("tick" if beat_tick % 2 == 0 else "tock", 1.0 + k * 3.0, 1.0 + k * 0.2)  # a clock, louder and quicker to the end
+	shake(0.05 + 0.12 * k)
+	for node in [die, prompt]:
+		if node.visible:
+			node.pivot_offset = node.size / 2.0
+			node.scale = Vector2.ONE * (1.12 + 0.1 * k)
+			node.create_tween().tween_property(node, "scale", Vector2.ONE, 0.22)
+
+
+func time_up() -> void:
+	# the moment a countdown runs out
+	if vig == null:
+		_build_beat()
+	beat_power = 1.6
+	beat_pulse = 1.0
+	screen_flash(Color(0.9, 0.0, 0.03, 0.42))
+	shake(0.35)
+	beat_frac = 0.0
+	beat_secs = 0.0
+	beat_show_until = Time.get_ticks_msec() + 700  # the clock stays a moment at zero
+	sfx.play("alarm", 2.0)
+	sfx.play("bad")
+
+
+func blood(p: Dictionary) -> void:
+	# Where a blade, fang, claw or spike lands: a spray of blood, and drops
+	# left on the stone for a few seconds. A shield takes the blow instead.
+	if p.shield:
+		return
+	var root: Node3D = p.a
+	var at := root.position + Vector3(0, 1.0, 0)
+	burst(at, Color("9e0f17"), 24, 6.5)
+	burst(at, Color("ff3434"), 12, 3.5)
+	var spl := Node3D.new()
+	spl.position = root.position + Vector3(0, 0.03, 0)
+	world.add_child(spl)
+	for k in 7:
+		var d := rng.randf_range(0.1, 0.34)
+		box(spl, Vector3(d, 0.03, d * rng.randf_range(0.6, 1.4)), Vector3(rng.randf_range(-0.75, 0.75), 0, rng.randf_range(-0.75, 0.75)), Color("8a0d14") if k % 2 == 0 else Color("b3121a")).rotation.y = rng.randf_range(0, TAU)
+	var fade := spl.create_tween()
+	fade.tween_interval(5.0)
+	fade.tween_property(spl, "scale", Vector3(1, 0.01, 1) * 0.01, 0.8)
+	fade.tween_callback(spl.queue_free)
+	if not p.bot:
+		screen_flash(Color(0.75, 0.0, 0.02, 0.3))
 
 
 func hitstop(sec := 0.07) -> void:
@@ -1070,7 +1223,7 @@ func make_slab(i: int, kind: String) -> Node3D:
 	world.add_child(root)
 	var base := STONE
 	match kind:
-		"crumble": base = STONE.darkened(0.07)  # looks almost like any other slab
+		"crumble": base = Color("a59f93")  # weathered grey among the gold: old stone that will not hold
 		"rope": base = Color("9fd98a")  # green: a way forward
 		"snake": base = SNAKE
 		"mystery": base = MYSTERY
@@ -2433,6 +2586,18 @@ func ask_tutorial() -> void:
 	col.add_theme_constant_override("separation", 16)
 	card_p.add_child(col)
 	title(col, "WELCOME, SEEKER", 44, GOLD)
+	if not gifted:
+		var gift := HBoxContainer.new()
+		gift.alignment = BoxContainer.ALIGNMENT_CENTER
+		gift.add_theme_constant_override("separation", 10)
+		col.add_child(gift)
+		var coin_pic := TextureRect.new()
+		coin_pic.texture = ui_tex("coin")
+		coin_pic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		coin_pic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		coin_pic.custom_minimum_size = Vector2(52, 52)
+		gift.add_child(coin_pic)
+		title(gift, "A WELCOME GIFT: %d COINS" % WELCOME_COINS, 28, Color("7dff9b")).autowrap_mode = TextServer.AUTOWRAP_OFF
 	title(col, "Want a quick tutorial? Short tips will light up each part of the game the first time you meet it.", 26, Color("fff3c4")).custom_minimum_size = Vector2(540, 0)
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 14)
@@ -2450,8 +2615,23 @@ func ask_tutorial() -> void:
 	tips_asked = true
 	tips_on = want[0]
 	asking = false
+	give_welcome()
 	save_settings()
 	root.queue_free()
+
+
+func give_welcome() -> void:
+	if gifted:
+		return
+	gifted = true
+	wallet += WELCOME_COINS
+	wallet_pulse[0] = clock + 0.6
+	sfx.play("coin")
+	sfx.play("good", -4.0)
+	for w in wallets:
+		if is_instance_valid(w):
+			w.queue_redraw()
+	save_settings()
 
 
 func run_tour(page: String, marks: Dictionary) -> void:
@@ -2463,6 +2643,8 @@ func run_tour(page: String, marks: Dictionary) -> void:
 		await ask_tutorial()
 		page = page_now  # whatever page is up now (it may have been rebuilt while the question was open)
 		marks = marks_now
+	if not autoplay and in_lobby:
+		give_welcome()  # players who answered before the gift existed get it now
 	var id := "tour_" + page
 	if not TOURS.has(page) or not tips_on or autoplay or seen.has(id) or not in_lobby:
 		return
@@ -2962,6 +3144,7 @@ func play() -> void:
 
 
 func take_turn(p: Dictionary) -> void:
+	fight_chain = 0
 	# Hand-over: a plate in the runner's colour says whose turn it is, and the
 	# camera glides across to them instead of jumping, before anything happens.
 	focus_p = p
@@ -3173,6 +3356,7 @@ func ask_move(want: String, what: String) -> bool:
 		await frame()
 		t += get_process_delta_time()
 		set_meter(jump_bar, 1.0 - t / window)
+		heartbeat(1.0 - t / window, 0.75)
 		if gesture == "":
 			continue
 		if not swipe:
@@ -3483,6 +3667,7 @@ func roll(p: Dictionary, quick := false) -> int:
 					clear_buttons()
 			if not shown:  # the roll clock waits while the BOOST panel is open
 				left -= get_process_delta_time()
+				heartbeat(left / ROLL_TIME, 0.4, left)
 			elif Time.get_ticks_msec() - life_tap > 12000:  # ...but not for ever
 				life_open = false
 			set_meter(turn_bar, left / ROLL_TIME)
@@ -3501,7 +3686,7 @@ func roll(p: Dictionary, quick := false) -> int:
 		if await_roll:
 			await_roll = false
 			set_die(0)
-			sfx.play("bad")
+			time_up()
 			say("You ran out of time. Turn lost")
 			announce("TIME UP", Color("ff6b5e"))
 			await wait(1.0)
@@ -3790,8 +3975,11 @@ func stride(p: Dictionary, nxt: int) -> bool:
 	if mine:
 		ok = await ask_move({"vault": "up", "flip": "up", "slide": "down", "spin": "side"}[style], {"vault": "LOG! VAULT", "flip": "WALL! FLIP", "slide": "BEAM! SLIDE", "spin": "BLADE! DODGE"}[style])
 	if not ok:  # tripped: over it in a heap. No life lost, but the move ends here
-		popup(root.position, "TRIPPED!", Color("ff9a2e"))
+		popup(root.position, "SLASHED!" if style == "spin" else "TRIPPED!", Color("ff9a2e"))
 		sfx.play("oof", -2.0)
+		if style == "spin":  # the blade catches them
+			sfx.play("ko", -2.0, 1.4)
+			blood(p)
 		root.pose = "hit"
 		root.express("pain", 1.0)
 		await hop(root, to, 0.8, 0.38)
@@ -3949,7 +4137,7 @@ func jump_phase(p: Dictionary, nxt: int) -> bool:
 	popup(root.position, "YEOW!", Color("ff6b5e"))
 	root.pose = "hit"
 	root.express("pain")
-	burst(root.position + Vector3(0, 0.4, 0), Color("e2463a"), 18, 5.0)
+	blood(p)
 	await hitstop()
 	root.air = true
 	await hop(root, spot(p, nxt), 2.0, 0.7)
@@ -3982,10 +4170,18 @@ func settle(p: Dictionary, forced := false) -> void:
 
 func back_to(from: int, d: int) -> int:
 	# Where a setback from slab "from" really ends. Never more than 6 slabs,
-	# never past the last torch behind the runner, and never behind the boulder
-	# or right in front of it.
+	# never past the last torch behind the runner, never behind the boulder or
+	# right in front of it, and never on a trap: a thrown runner comes down on
+	# plain stone, a slab further back or nearer if the first choice is trapped.
 	var floor_at: int = maxi(from - 6, ((from - 1) / 5) * 5)
-	return clampi(maxi(maxi(d, floor_at), bo + 3), 0, from)
+	var want: int = clampi(maxi(maxi(d, floor_at), bo + 3), 0, from)
+	for off in [0, -1, 1, -2, 2]:
+		var c: int = want + off
+		if c < 0 or c > from or c < mini(bo + 3, from) or (c == from and want != from):
+			continue
+		if not (kinds[c] in HARMFUL):
+			return c
+	return want
 
 
 func safe_back(p: Dictionary, d: int) -> int:
@@ -4467,6 +4663,7 @@ func snake_strike(p: Dictionary) -> void:
 	shake(0.4)
 	sfx.play("ko", 0.0, 1.2)
 	popup(root.position, "CHOMP!", Color("ff6b5e"))
+	blood(p)
 	root.express("pain")
 	burst(root.position + Vector3(0, 1, 0), Color("b8e04a"), 18, 5.0)
 	await hitstop(0.12)
@@ -4803,6 +5000,7 @@ func tiger_attack(p: Dictionary) -> void:
 	sw.tween_property(tg, "swipe", 0.0, 0.01)
 	await wait(0.12)
 	sfx.play("punch")
+	blood(p)
 	await hitstop(0.1)
 	burst(root.position + Vector3(0, 1, 0), Color("f08a24"), 18, 5.0)
 	root.pose = ""
@@ -4904,17 +5102,26 @@ func update_sky(delta: float) -> void:
 
 
 func bump(p: Dictionary) -> void:
-	# Landing on an occupied slab: fight for it, or share it. You are asked;
-	# a bot fights when the odds favour it, and sometimes when they do not.
+	# Whenever a runner comes to rest on an occupied slab (by a roll, or thrown
+	# or knocked there), it is settled the same way: fight for it or share it.
+	# If you are one of the two you are always asked, whoever arrived. Two
+	# bots: the newcomer fights when the odds favour it, sometimes when not.
 	if p.pos <= 5:  # start zone is safe
 		return
 	for q in players:
 		if q != p and active(q) and active(p) and q.pos == p.pos:
 			var odds := fight_odds(p, q)
-			var go: bool = odds >= 0.5 or rng.randf() < 0.25
-			if not is_bot(p):
-				go = await ask_fight(q, odds)
+			var go := false
+			if fight_chain >= 2:  # a knock-on brawl ends after two fights in one turn
+				go = false
+			elif not is_bot(p):
+				go = await ask_fight(q, odds, false)
+			elif not is_bot(q):
+				go = await ask_fight(p, 1.0 - odds, true)
+			else:
+				go = odds >= 0.5 or rng.randf() < 0.25
 			if go:
+				fight_chain += 1
 				await fight(p, q)
 			else:
 				popup(p.a.position, "SHARED", Color("7dff9b"))
@@ -4923,13 +5130,15 @@ func bump(p: Dictionary) -> void:
 				await wait(0.4)
 
 
-func ask_fight(q: Dictionary, odds: float) -> bool:
+func ask_fight(q: Dictionary, odds: float, arrived := false) -> bool:
+	# q is the other runner; "arrived" means they came to your slab rather than you to theirs
 	await tip("fight")
 	choice = ""
 	clear_buttons()
-	say("%s is on this slab" % q.name.capitalize())
-	show_card("heart", "FIGHT FOR THE SLAB?", "Winner stays. Loser is knocked back and loses a life", Color("ff6b5e"), 5.0)
-	add_button("FIGHT\n%d%% TO WIN" % roundi(odds * 100.0), Color("c0392b"), func() -> void: choice = "fight", 32)
+	focus_p = players[0]
+	say(("%s landed on your slab" if arrived else "%s is on this slab") % q.name.capitalize())
+	show_card("heart", "DEFEND YOUR SLAB?" if arrived else "FIGHT FOR THE SLAB?", "Winner stays. Loser is knocked back and loses a life", Color("ff6b5e"), 5.0)
+	add_button("FIGHT\nSTRENGTH %d%%" % roundi(odds * 100.0), Color("c0392b"), func() -> void: choice = "fight", 32)
 	add_button("PASS\nSHARE IT", Color("3fae5a"), func() -> void: choice = "pass", 32)
 	turn_bar.visible = true
 	lbl_hint.visible = true
@@ -4939,17 +5148,55 @@ func ask_fight(q: Dictionary, odds: float) -> bool:
 		left -= get_process_delta_time()
 		set_meter(turn_bar, left / 5.0)
 		lbl_hint.text = "CHOOSE IN %d" % ceili(left)  # the limit, counted down
+		heartbeat(left / 5.0, 0.6, left)
 	turn_bar.visible = false
 	lbl_hint.visible = false
 	lbl_hint.text = "TAP ANYWHERE TO ROLL"
 	clear_buttons()
 	if choice == "":  # no answer in time: the slab is shared
 		announce("TIME UP", Color("ff6b5e"))
-		sfx.play("bad", -6.0)
+		time_up()
 	if card_tw:
 		card_tw.kill()
 	card.visible = false
 	return choice == "fight"
+
+
+func mash(strength: float) -> bool:
+	# Your fights are won by hand: tap fast to fill the bar before the time
+	# runs out. Strength (the fight odds: wounds and hearts) sets how much each
+	# tap fills, from 10 taps when you are strong to 30 when you are weak.
+	await tip("mash")
+	var need := roundi(lerpf(30.0, 10.0, clampf((strength - 0.15) / 0.75, 0.0, 1.0)))
+	var limit := 4000
+	mash_taps = 0
+	mash_open = true
+	die.visible = false
+	prompt_dir = "tap"
+	prompt_text = "TAP FAST TO WIN!"
+	prompt.visible = true
+	say("Tap fast! Fill the bar to win the fight")
+	jump_bar.modulate.a = 1.0
+	turn_bar.visible = true
+	var t0 := Time.get_ticks_msec()  # real time: fights run in slow motion
+	while Time.get_ticks_msec() - t0 < limit and mash_taps < need:
+		await frame()
+		set_meter(jump_bar, float(mash_taps) / need)
+		set_meter(turn_bar, 1.0 - float(Time.get_ticks_msec() - t0) / limit)
+		heartbeat(1.0 - float(Time.get_ticks_msec() - t0) / limit, 0.6, (limit - (Time.get_ticks_msec() - t0)) / 1000.0)
+	var won := mash_taps >= need
+	if not won:
+		time_up()
+	set_meter(jump_bar, 1.0 if won else float(mash_taps) / need)
+	mash_open = false
+	announce("YOU WIN THE FIGHT!" if won else "TOO SLOW!", Color("7dff9b") if won else Color("ff6b5e"))
+	sfx.play("good" if won else "bad", -3.0)
+	await wait(0.5)
+	die.visible = true
+	prompt.visible = false
+	jump_bar.modulate.a = 0.0
+	turn_bar.visible = false
+	return won
 
 
 func fight_odds(p: Dictionary, q: Dictionary) -> float:
@@ -4970,6 +5217,10 @@ func fight(p: Dictionary, q: Dictionary) -> void:
 	# the loser off the slab. The newcomer can lose.
 	var chance := fight_odds(p, q)
 	var p_wins := rng.randf() < chance
+	if not is_bot(p) or not is_bot(q):  # you are in it: your taps decide, not the dice
+		var mine: float = chance if not is_bot(p) else 1.0 - chance
+		var won: bool = await mash(mine)
+		p_wins = won if not is_bot(p) else not won
 	var win: Dictionary = p if p_wins else q
 	var lose: Dictionary = q if p_wins else p
 	var a: Node3D = p.a
@@ -5074,19 +5325,51 @@ func fight(p: Dictionary, q: Dictionary) -> void:
 	await hurt(lose)
 	if active(lose) and lose.pos == landed:
 		await settle(lose, true)
+		await bump(lose)  # knocked onto someone else's slab
 
 
 func boulder_turn() -> void:
+	fight_chain = 0
 	# The boulder has its own turn at the end of every round, announced like a
 	# player's. One rule: it rolls forward a few slabs, chasing whoever is
 	# last, and any runner it reaches loses a life and is knocked on ahead of
 	# it. It never rolls backwards and never kills outright.
 	if round_no < 4:  # it sleeps while everyone leaves the start
 		if round_no == 3:
-			show_card("", "THE BOULDER WAKES", "It chases whoever is last. If it hits you, you lose a life", Color("ff9a2e"), 2.2)
-			sfx.play("boulder", -4.0)
-			shake(0.3)
-			await wait(2.2)
+			# Cut to the boulder at the foot of the path: it shudders, dust
+			# falls, it breaks loose and lurches forward a slab.
+			var d0 := dirs[0]
+			in_cine = true
+			cine_smooth = 3.0
+			cine_target = boulder
+			cine_pos = boulder.position + d0 * 6.5 + d0.cross(Vector3.UP) * 3.0 + Vector3(0, 2.6, 0)
+			cine_look_now = boulder.position
+			letterbox(true)
+			show_card("", "THE BOULDER WAKES", "It chases whoever is last. If it hits you, you lose a life", Color("ff9a2e"), 3.2)
+			await wait(0.9)
+			sfx.play("boulder", -2.0)
+			for k in 6:  # the shudder grows
+				shake(0.12 + k * 0.07)
+				burst(boulder.position + Vector3(rng.randf_range(-1, 1), -1.1, rng.randf_range(-1, 1)), Color("b3ada1"), 6 + k * 2, 3.0)
+				boulder.position.y += 0.12 if k % 2 == 0 else -0.12
+				await wait(0.22)
+			sfx.play("crush", -3.0)
+			shake(0.6)
+			var b_from := bo
+			bo += 1
+			var lurch := create_tween()
+			lurch.tween_method(func(f: float) -> void:
+				var a := floori(f)
+				boulder.position = slab_pos(a).lerp(slab_pos(a + 1), f - a) + Vector3(0, 1.25, 0)
+				if Engine.get_frames_drawn() % 3 == 0:
+					burst(boulder.position - Vector3(0, 1.1, 0), Color("b3ada1"), 4, 3.0), float(b_from), float(bo), 0.9)
+			await lurch.finished
+			burst(boulder.position - Vector3(0, 1.2, 0), Color("8a8478"), 18, 4.5)
+			await wait(0.7)
+			letterbox(false)
+			in_cine = false
+			cine_target = null
+			cine_smooth = 0.0
 			await tip("boulder")
 		return
 	for p in players:  # nobody may be at or behind it
@@ -5103,7 +5386,6 @@ func boulder_turn() -> void:
 			last = p
 	if last.is_empty():
 		return
-	focus_p = last
 	var speed := mini(2 + round_no / 6, 4)
 	if last.pos - bo > 12:
 		speed += 2
@@ -5113,34 +5395,61 @@ func boulder_turn() -> void:
 	for p in players:
 		if active(p) and p.pos <= target:
 			victims.append(p)
-	var near: bool = last.pos - target <= 9
+	# The camera goes to the boulder only when it matters: once it is within 7
+	# slabs of the last runner, and every turn after that until the gap opens
+	# again. Further back it rolls unseen: a card and the race bar say where it is.
+	var near: bool = last.pos - target <= 7 or last.pos - bo <= 7
 	var who: String = "YOU" if not last.bot else last.name
 	if victims.is_empty():
 		show_card("", "BOULDER ROLLS %d" % speed, "It will be %d slabs behind %s" % [last.pos - target, who], Color("ff9a2e"), 1.3)
 	else:
 		show_card("", "BOULDER ROLLS %d" % speed, "It reaches %s!" % who, Color("ff5a4a"), 1.5)
-	if near:  # look back down the path at it
-		var i: int = clampi(last.pos, 0, END)
+	if near:
+		# One shot, always the same way round: behind and above the boulder
+		# looking up the path; it holds while the card is read, then trails
+		# the boulder as it rolls away towards the runners.
+		focus_p = last
+		var bd := dirs[clampi(bo, 0, END)]
+		var b_side := bd.cross(Vector3.UP)
 		in_cine = true
-		cine_smooth = 5.0
+		cine_smooth = 2.2
 		cine_target = boulder
-		cine_pos = last.a.position + dirs[i] * 5.5 + dirs[i].cross(Vector3.UP) * 2.6 + Vector3(0, 4.2, 0)
-		cine_look_now = last.a.position + Vector3(0, 1.0, 0)
+		if bo < 1:  # still at the cave mouth: from the side, there is rock behind it
+			cine_pos = boulder.position + b_side * 6.0 + bd * 1.5 + Vector3(0, 2.8, 0)
+		else:
+			cine_pos = boulder.position - bd * 7.5 + b_side * 2.2 + Vector3(0, 4.6, 0)
+		cine_look_now = boulder.position
+		var i: int = clampi(last.pos, 0, END)
 		last.a.express("scared")
 		last.a.turn_to(yaws[i] + PI)  # the runner looks back at it
 		quip(last, "boulder")
-		await wait(0.7)
+		await wait(1.2)
+	else:
+		await wait(0.9)  # the card is read; the camera stays where it is
 	shake(0.2)
 	sfx.play("boulder")
 	bo = target
+	var me_b := players[0]
 	var tw := create_tween()
 	tw.tween_method(func(f: float) -> void:
 		var a := floori(f)
 		boulder.position = slab_pos(a).lerp(slab_pos(a + 1), f - a) + Vector3(0, 1.25, 0)
-		if near and Engine.get_frames_drawn() % 4 == 0:
-			burst(boulder.position - Vector3(0, 1.1, 0), Color("b3ada1"), 3, 2.5), float(from_i), float(bo), 0.7 + (0.5 if near else 0.0))
+		if near and a >= 1:  # the camera follows a little way behind
+			var d2 := dirs[clampi(a, 0, END)]
+			cine_pos = boulder.position - d2 * 7.5 + d2.cross(Vector3.UP) * 2.2 + Vector3(0, 4.6, 0)
+		if Engine.get_frames_drawn() % 4 == 0:
+			burst(boulder.position - Vector3(0, 1.1, 0), Color("b3ada1"), 3, 2.5)
+		if active(me_b) and me_b.pos - f <= 7.0:  # the ground shakes harder the closer it comes to you
+			shake(0.1 + 0.35 * (1.0 - clampf((me_b.pos - f) / 7.0, 0.0, 1.0))), float(from_i), float(bo), 1.7 if near else 0.5)
 	await tw.finished
 	burst(boulder.position - Vector3(0, 1.2, 0), Color("8a8478"), 14, 4.0)
+	if near:
+		await wait(0.7)  # it comes to rest before the camera leaves it
+	if active(me_b) and me_b.pos - bo <= 4 and not (me_b in victims):  # it stops right behind you
+		shake(0.55)
+		sfx.play("crush", -6.0)
+		screen_flash(Color(1.0, 0.45, 0.1, 0.18))
+		popup(me_b.a.position, "TOO CLOSE!", Color("ff9a2e"))
 	for v in victims:
 		var root: Node3D = v.a
 		focus_p = v
@@ -5167,11 +5476,18 @@ func boulder_turn() -> void:
 			if res == "hit":
 				quip(v, "boulder_hit")
 			await wait(0.6)
-	_end_watch(last)
+			await bump(v)  # bowled onto someone else's slab
 	if victims.is_empty():
 		say("Boulder is %d slabs behind %s" % [last.pos - bo, obj(last)])
 	refresh_ui()
-	await wait(0.6)
+	if near:
+		# straight on to whoever plays next: the camera must not call on anyone else on the way
+		for p in players:
+			if active(p):
+				focus_p = p
+				break
+		_end_watch(last)
+		await wait(0.3)
 
 
 func _end_watch(last: Dictionary) -> void:
@@ -5290,6 +5606,68 @@ func _draw_card(b: Control, n: int) -> void:
 		b.draw_rect(Rect2(at, Vector2(w, w)), c)
 		b.draw_rect(Rect2(at + Vector2(5, 11), Vector2(w - 10, w - 14)), Color("c68e5f"))
 		b.draw_rect(Rect2(at + Vector2(1, 6), Vector2(w - 2, 6)), Color("b08d57"))
+
+
+func play_splash() -> void:
+	# The studio intro, full screen over the lobby: frames in res://splash/
+	# shown at 15 a second with the sound beside them. Tap to skip.
+	if splash_done or OS.has_feature("web") or autoplay or not ResourceLoader.exists("res://splash/f001.jpg"):
+		return
+	for dev in ["VAULT_MENU", "VAULT_SHOT", "VAULT_ZOO", "VAULT_NOSPLASH"]:
+		if OS.has_environment(dev):
+			return
+	splash_done = true
+	var root := Control.new()
+	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	root.mouse_filter = Control.MOUSE_FILTER_STOP
+	bubble.get_parent().add_child(root)
+	var black := ColorRect.new()
+	black.color = Color.BLACK
+	black.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	for side in ["offset_left", "offset_top"]:
+		black.set(side, -3000)
+	for side in ["offset_right", "offset_bottom"]:
+		black.set(side, 3000)
+	black.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(black)
+	var pic := TextureRect.new()
+	pic.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	pic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	pic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	pic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(pic)
+	var skip := [false]
+	var t0 := Time.get_ticks_msec()
+	root.gui_input.connect(func(e: InputEvent) -> void:
+		if (e is InputEventMouseButton or e is InputEventScreenTouch) and e.pressed and Time.get_ticks_msec() - t0 > 800:
+			skip[0] = true)
+	var snd := AudioStreamPlayer.new()
+	if ResourceLoader.exists("res://splash/intro.ogg"):
+		snd.stream = load("res://splash/intro.ogg")
+	root.add_child(snd)
+	snd.play()
+	await get_tree().process_frame
+	if sfx.music_player:  # the game's own music waits
+		sfx.music_player.stream_paused = true
+	var shown := 0
+	while not skip[0] and is_inside_tree():
+		var k := int((Time.get_ticks_msec() - t0) * 15 / 1000) + 1
+		var path := "res://splash/f%03d.jpg" % k
+		if not ResourceLoader.exists(path):
+			break
+		if k != shown:
+			shown = k
+			pic.texture = load(path)
+		await get_tree().process_frame
+	if not skip[0]:
+		await get_tree().create_timer(0.5, true, false, true).timeout  # the logo holds
+	var out := root.create_tween().set_ignore_time_scale(true)
+	out.tween_property(root, "modulate:a", 0.0, 0.45)
+	out.parallel().tween_property(snd, "volume_db", -40.0, 0.45)
+	await out.finished
+	if sfx.music_player:
+		sfx.music_player.stream_paused = false
+	root.queue_free()
 
 
 func show_lobby() -> void:
@@ -5726,6 +6104,7 @@ func save_settings() -> void:
 	cf.set_value("game", "gems", gems)
 	cf.set_value("game", "tips", tips_on)
 	cf.set_value("game", "tips_asked", tips_asked)
+	cf.set_value("game", "gifted", gifted)
 	cf.set_value("game", "seen", seen)
 	cf.set_value("game", "stock", stock)
 	cf.set_value("game", "perm", perm)
@@ -5734,11 +6113,20 @@ func save_settings() -> void:
 	cf.set_value("game", "records", records)
 	cf.set_value("game", "stats", stats)
 	cf.save("user://settings.cfg")
+	if OS.has_feature("web"):
+		# A second copy in the browser's localStorage: on some phones the file
+		# store (IndexedDB) does not survive between visits, and the game would
+		# forget coins, diamonds and that the tutorial question was answered.
+		JavaScriptBridge.eval("try{localStorage.setItem('treasure_seeker_save', %s)}catch(e){}" % JSON.stringify(cf.encode_to_text()))
 
 
 func load_settings() -> void:
 	var cf := ConfigFile.new()
-	if cf.load("user://settings.cfg") == OK:
+	var ok := cf.load("user://settings.cfg") == OK
+	if not ok and OS.has_feature("web"):  # the file is gone: fall back on the copy in localStorage
+		var kept: Variant = JavaScriptBridge.eval("(function(){try{return localStorage.getItem('treasure_seeker_save')}catch(e){return null}})()")
+		ok = kept is String and kept != "" and cf.parse(kept) == OK
+	if ok:
 		view_mode = cf.get_value("game", "view", "turn")
 		sound_on = cf.get_value("game", "sound", true)
 		female = cf.get_value("game", "female", false)
@@ -5750,6 +6138,7 @@ func load_settings() -> void:
 		gems = cf.get_value("game", "gems", 0)
 		tips_on = cf.get_value("game", "tips", true)
 		tips_asked = cf.get_value("game", "tips_asked", false)
+		gifted = cf.get_value("game", "gifted", false)
 		seen = cf.get_value("game", "seen", {})
 		stock = cf.get_value("game", "stock", {})
 		perm = cf.get_value("game", "perm", {})
@@ -5875,6 +6264,12 @@ func _input(event: InputEvent) -> void:
 		return
 	if not touch:
 		return
+	if mash_open:  # a fight: every separate tap fills the bar (a touch and its mouse copy count once)
+		if Time.get_ticks_msec() - mash_last > 45:
+			mash_last = Time.get_ticks_msec()
+			mash_taps += 1
+			sfx.play("step", -9.0, 1.3)
+		return
 	if tip_open:  # the tutorial card: this tap only closes it
 		if Time.get_ticks_msec() - tip_since > 700:  # a tap meant for the game just before the card came up does not dismiss it
 			tip_open = false
@@ -5914,6 +6309,12 @@ func _process(delta: float) -> void:
 		Engine.time_scale = 0.0 if tip_open else slow_now * turn_speed
 	if prompt.visible:
 		prompt.queue_redraw()
+	if vig:  # the pulse falls away between beats
+		beat_pulse = lerpf(beat_pulse, 0.0, minf(1.0, real * 6.0))
+		vig.material.set_shader_parameter("power", beat_pulse * beat_power)
+		beat_ui.visible = Time.get_ticks_msec() < beat_show_until
+		if beat_ui.visible:
+			beat_ui.queue_redraw()
 	if clock < maxf(wallet_pulse[0], wallet_pulse[1]) + 0.1:  # a pill is mid-bump
 		for w in wallets:
 			if is_instance_valid(w):
@@ -6081,7 +6482,7 @@ func _process(delta: float) -> void:
 	var side := cam_dir.cross(Vector3.UP)
 	cam.position = cam_base - cam_dir * lerpf(7.4, 4.4 - (zoom_side - 1.9) * 0.75, z) + side * zoom_side * z + Vector3(0, lerpf(6.6, 2.5, z), 0)
 	cam.look_at((cam_base + cam_dir * 5.5 + Vector3(0, 0.6, 0)).lerp(cam_base + Vector3(0, 1.15, 0), z))
-	cam.fov = lerpf(62.0, 50.0, z)
+	cam.fov = lerpf(62.0, 50.0, z) - beat_pulse * 3.5  # the camera pushes in with each heartbeat
 	cam.h_offset = rng.randf_range(-1, 1) * shake_amt
 	cam.v_offset = rng.randf_range(-1, 1) * shake_amt
 	shake_amt = lerpf(shake_amt, 0.0, minf(1.0, delta * 7.0))

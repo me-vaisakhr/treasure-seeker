@@ -48,6 +48,16 @@ func _ready() -> void:
 	streams["splash"] = wav(gain(noise(0.4, 0.5, 4.0), 0.6))
 	streams["chirp"] = wav(gain(cat([tone(0.06, 2600, 3500, "sine", 1.5), silence(0.05), tone(0.06, 2900, 3700, "sine", 1.5), silence(0.04), tone(0.09, 3300, 2500, "sine", 2.0)]), 0.25))
 
+	# a clock for the last seconds of a countdown, and its alarm at zero
+	streams["tick"] = wav(gain(cat([tone(0.012, 2400, 1900, "square", 3.0), tone(0.05, 1500, 900, "sine", 9.0)]), 0.7))
+	streams["tock"] = wav(gain(cat([tone(0.012, 1700, 1300, "square", 3.0), tone(0.06, 1000, 600, "sine", 9.0)]), 0.7))
+	var ring := PackedFloat32Array()
+	for k in 5:
+		ring.append_array(tone(0.07, 1900, 1900, "square", 1.0))
+		ring.append_array(silence(0.035))
+	streams["alarm"] = wav(gain(ring, 0.4))
+	# heartbeat for the last seconds of a countdown: lub-dub
+	streams["heart"] = wav(gain(cat([tone(0.11, 78, 46, "sine", 5.0), silence(0.07), tone(0.14, 64, 38, "sine", 4.0)]), 1.5))
 	streams["thunder"] = wav(mix(gain(noise(2.4, 0.03, 1.4), 2.2), tone(2.4, 46, 30, "sine", 1.2)))
 	streams["punch"] = streams["bump"]
 	streams["growl"] = streams["roar"]
