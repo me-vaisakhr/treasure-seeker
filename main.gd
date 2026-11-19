@@ -315,6 +315,8 @@ var safe: Control          # HUD parent, inset to clear the notch and the home b
 var lbl_count: Label       # giant 3-2-1-GO
 var pause_btn: Button
 var pause_panel: Control
+var pause_at := 0
+var pause_lost := 0  # real milliseconds spent on the pause screen, taken off real-time countdowns
 var cine_look_now := Vector3.ZERO
 var cine_smooth := 0.0     # >0: the intro camera eases towards its target instead of snapping
 var bars: Array[ColorRect] = []  # letterbox bars for the opening
@@ -754,7 +756,7 @@ func hitstop(sec := 0.07) -> void:
 		await never
 	stopping = true
 	Engine.time_scale = 0.05
-	await get_tree().create_timer(sec, true, false, true).timeout
+	await get_tree().create_timer(sec, false, false, true).timeout
 	if dead or not is_inside_tree():
 		await never
 	stopping = false
@@ -884,7 +886,7 @@ func squash(node: Node3D) -> void:
 func wait(sec: float) -> void:
 	if dead or not is_inside_tree():  # race abandoned: go no further
 		await never
-	await get_tree().create_timer(sec).timeout
+	await get_tree().create_timer(sec, false).timeout  # stops with the pause screen
 	if dead or not is_inside_tree():
 		await never
 
@@ -893,6 +895,8 @@ func frame() -> void:
 	if dead or not is_inside_tree():
 		await never
 	await get_tree().process_frame
+	while is_inside_tree() and get_tree().paused:  # the pause screen holds every countdown and loop
+		await get_tree().process_frame
 	if dead or not is_inside_tree():
 		await never
 
@@ -1525,6 +1529,10 @@ func toggle_pause() -> void:
 	var on := not get_tree().paused
 	get_tree().paused = on
 	pause_panel.visible = on
+	if on:
+		pause_at = Time.get_ticks_msec()
+	else:
+		pause_lost += Time.get_ticks_msec() - pause_at
 	sfx.play("step")
 
 
@@ -5178,12 +5186,12 @@ func mash(strength: float) -> bool:
 	say("Tap fast! Fill the bar to win the fight")
 	jump_bar.modulate.a = 1.0
 	turn_bar.visible = true
-	var t0 := Time.get_ticks_msec()  # real time: fights run in slow motion
-	while Time.get_ticks_msec() - t0 < limit and mash_taps < need:
+	var t0 := (Time.get_ticks_msec() - pause_lost)  # real time: fights run in slow motion
+	while (Time.get_ticks_msec() - pause_lost) - t0 < limit and mash_taps < need:
 		await frame()
 		set_meter(jump_bar, float(mash_taps) / need)
-		set_meter(turn_bar, 1.0 - float(Time.get_ticks_msec() - t0) / limit)
-		heartbeat(1.0 - float(Time.get_ticks_msec() - t0) / limit, 0.6, (limit - (Time.get_ticks_msec() - t0)) / 1000.0)
+		set_meter(turn_bar, 1.0 - float((Time.get_ticks_msec() - pause_lost) - t0) / limit)
+		heartbeat(1.0 - float((Time.get_ticks_msec() - pause_lost) - t0) / limit, 0.6, (limit - ((Time.get_ticks_msec() - pause_lost) - t0)) / 1000.0)
 	var won := mash_taps >= need
 	if not won:
 		time_up()
