@@ -92,7 +92,33 @@ body {
 		</style>
 		<link id="-gd-engine-icon" rel="icon" type="image/png" href="index.icon.png" />
 <link rel="apple-touch-icon" href="index.apple-touch-icon.png"/>
-
+<style>
+#boot{position:fixed;left:0;top:0;width:100%;height:100%;z-index:99999;background:#000;transition:opacity .45s}
+#boot video{width:100%;height:100%;object-fit:contain;background:#000}
+#boot span{position:absolute;left:0;right:0;bottom:6%;text-align:center;color:#ffd76a;font:600 15px sans-serif;letter-spacing:3px;opacity:0;transition:opacity .4s}
+</style>
+<script>
+/* Boot intro: the studio video plays over the page while the engine loads, in place of the progress bar.
+   It closes when the video has ended and the game is ready (the loader's #status element is gone). */
+document.addEventListener('DOMContentLoaded',function(){
+var b=document.createElement('div');b.id='boot';
+b.innerHTML='<video autoplay muted playsinline preload=auto><source src=index.intro.mp4 type=video/mp4></video><span>LOADING</span>';
+document.body.appendChild(b);
+var v=b.firstChild,note=b.lastChild,over=false,gone=false,t0=Date.now();
+function ready(){return !document.getElementById('status');}
+function shut(){if(gone)return;gone=true;b.style.opacity=0;setTimeout(function(){b.remove();},500);}
+v.addEventListener('ended',function(){over=true;});
+v.addEventListener('error',function(){over=true;},true);
+b.addEventListener('pointerdown',function(){if(ready())shut();});
+var pl=v.play&&v.play();if(pl&&pl.catch)pl.catch(function(){over=true;});
+var iv=setInterval(function(){
+var el=Date.now()-t0;
+if(el>9000)over=true;
+if(over&&!ready())note.style.opacity=1;
+if((over&&ready())||el>40000){clearInterval(iv);shut();}
+},150);
+});
+</script>
 	</head>
 	<body>
 		<canvas id="canvas">
@@ -111,7 +137,7 @@ body {
 
 		<script src="index.js"></script>
 		<script>
-const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"index","experimentalVK":false,"fileSizes":{"index.pck":4425008,"index.wasm":39514754},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4};
+const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"index","experimentalVK":false,"fileSizes":{"index.pck":4436112,"index.wasm":39514754},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4};
 const GODOT_THREADS_ENABLED = false;
 const engine = new Engine(GODOT_CONFIG);
 
